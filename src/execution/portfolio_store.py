@@ -45,7 +45,8 @@ class PersistentPortfolio:
                 quantity INTEGER NOT NULL,
                 avg_cost REAL NOT NULL,
                 entry_fees REAL DEFAULT 0,
-                opened_at TEXT NOT NULL
+                opened_at TEXT NOT NULL,
+                is_short INTEGER DEFAULT 0
             );
 
             CREATE TABLE IF NOT EXISTS equity_curve (
@@ -78,6 +79,7 @@ class PersistentPortfolio:
                     quantity=row["quantity"],
                     avg_cost=row["avg_cost"],
                     entry_fees=row["entry_fees"],
+                    is_short=bool(row["is_short"]) if "is_short" in row.keys() else False,
                 )
 
             p = Portfolio(cash=cash, fee_model=self._fee_model, realized_pnl=realized_pnl, total_fees_paid=total_fees)
@@ -102,8 +104,10 @@ class PersistentPortfolio:
         self._conn.execute("DELETE FROM positions")
         for sym, pos in p.positions.items():
             self._conn.execute(
-                "INSERT INTO positions VALUES (?, ?, ?, ?, ?)",
-                (sym, pos.quantity, pos.avg_cost, pos.entry_fees, pos.opened_at.isoformat() if hasattr(pos.opened_at, 'isoformat') else str(pos.opened_at)),
+                "INSERT INTO positions VALUES (?, ?, ?, ?, ?, ?)",
+                (sym, pos.quantity, pos.avg_cost, pos.entry_fees,
+                 pos.opened_at.isoformat() if hasattr(pos.opened_at, 'isoformat') else str(pos.opened_at),
+                 1 if pos.is_short else 0),
             )
         self._conn.commit()
 
@@ -119,6 +123,22 @@ class PersistentPortfolio:
         """Thread-safe sell with persistence."""
         with self._lock:
             result = self.portfolio.sell(symbol, quantity, price)
+            if result:
+                self._save_state()
+            return result
+
+    def short(self, symbol: str, quantity: int, price: float) -> dict | None:
+        """Thread-safe short with persistence."""
+        with self._lock:
+            result = self.portfolio.short(symbol, quantity, price)
+            if result:
+                self._save_state()
+            return result
+
+    def cover(self, symbol: str, quantity: int, price: float) -> dict | None:
+        """Thread-safe cover with persistence."""
+        with self._lock:
+            result = self.portfolio.cover(symbol, quantity, price)
             if result:
                 self._save_state()
             return result

@@ -42,6 +42,9 @@ class RiskManager:
         self._halt_reason: str = ""
         self._day: str = ""
 
+        # PDT tracking: list of (symbol, action, timestamp) for round-trip detection
+        self._trade_history: list[tuple[str, str, datetime]] = []
+
     def reset_daily(self, portfolio_value: float):
         """Call at start of each trading day."""
         today = datetime.now(UTC).strftime("%Y-%m-%d")
@@ -152,6 +155,65 @@ class RiskManager:
             logger.warning("Correlation check failed: %s", e)
 
         return True, "OK"
+
+    # ── PDT Rule Tracking ─────────────────────────────────────────────────────
+
+    def record_trade_for_pdt(self, symbol: str, action: str):
+        """Record a trade for PDT tracking. Call after every buy/sell execution."""
+        self._trade_history.append((symbol, action.upper(), datetime.now(UTC)))
+
+    def _count_day_trades(self, window_days: int = 5) -> int:
+        """Count round-trip day trades in the rolling window.
+
+        A round trip = buy + sell of the same symbol on the same calendar day.
+        """
+        from collections import defaultdict
+        from datetime import timedelta
+
+        cutoff = datetime.now(UTC) - timedelta(days=window_days)
+        recent = [(s, a, t) for s, a, t in self._trade_history if t >= cutoff]
+
+        # Group by (symbol, date)
+        day_trades: dict[tuple[str, str], list[str]] = defaultdict(list)
+        for symbol, action, ts in recent:
+            day_key = (symbol, ts.strftime("%Y-%m-%d"))
+            day_trades[day_key].append(action)
+
+        # Count round trips: a day with both BUY and SELL for same symbol
+        count = 0
+        for key, actions in day_trades.items():
+            buys = sum(1 for a in actions if a == "BUY")
+            sells = sum(1 for a in actions if a == "SELL")
+            count += min(buys, sells)
+
+        return count
+
+    def check_pdt(self, symbol: str, portfolio_value: float) -> tuple[bool, str]:
+        """Check Pattern Day Trader rule compliance.
+
+        If account < $25,000 and approaching 3 day trades in 5 days, warn/block.
+
+        Returns:
+            (allowed, reason) — True if the trade is allowed.
+        """
+        if portfolio_value >= 25_000:
+            return True, "Account >= $25,000; PDT rule does not apply"
+
+        day_trade_count = self._count_day_trades()
+
+        if day_trade_count >= 3:
+            return False, (
+                f"PDT BLOCKED: {day_trade_count} day trades in 5 days "
+                f"(account ${portfolio_value:,.2f} < $25,000)"
+            )
+
+        if day_trade_count == 2:
+            return True, (
+                f"PDT WARNING: {day_trade_count}/3 day trades used. "
+                f"Next round-trip will trigger PDT restriction."
+            )
+
+        return True, f"PDT OK: {day_trade_count}/3 day trades in rolling 5 days"
 
     # ── Kill Switch ──────────────────────────────────────────────────────────
 

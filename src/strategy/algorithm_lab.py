@@ -81,6 +81,8 @@ class BacktestResult:
     max_drawdown: float = 0.0
     win_rate: float = 0.0
     tested_at: str = ""
+    p_value: float = 1.0
+    is_significant: bool = False
 
 
 class AlgorithmLab:
@@ -243,6 +245,10 @@ class AlgorithmLab:
             if dd > max_dd:
                 max_dd = dd
 
+        # Monte Carlo permutation test for statistical significance
+        p_value = self._monte_carlo_significance(pnls, sharpe, n_permutations=1000)
+        is_significant = p_value < 0.05
+
         result = BacktestResult(
             strategy_id=strategy.strategy_id, symbol=symbol,
             total_trades=len(pnls), wins=wins, losses=losses,
@@ -251,6 +257,8 @@ class AlgorithmLab:
             max_drawdown=round(max_dd * 100, 2),
             win_rate=round(wins / len(pnls), 4) if pnls else 0,
             tested_at=datetime.now(UTC).isoformat(),
+            p_value=round(p_value, 4),
+            is_significant=is_significant,
         )
 
         # Save result
@@ -260,6 +268,35 @@ class AlgorithmLab:
         )
         self.conn.commit()
         return result
+
+    @staticmethod
+    def _monte_carlo_significance(pnls: list[float], actual_sharpe: float, n_permutations: int = 1000) -> float:
+        """Run Monte Carlo permutation test on trade returns.
+
+        Shuffles returns N times, computes Sharpe each time.
+        Returns p-value: fraction of random Sharpes >= actual Sharpe.
+        """
+        if len(pnls) < 3 or actual_sharpe <= 0:
+            return 1.0
+
+        import math
+
+        random_sharpes_above = 0
+        for _ in range(n_permutations):
+            shuffled = pnls.copy()
+            random.shuffle(shuffled)
+            mean_s = sum(shuffled) / len(shuffled)
+            if len(shuffled) > 1:
+                var_s = sum((p - mean_s) ** 2 for p in shuffled) / (len(shuffled) - 1)
+                std_s = math.sqrt(var_s) if var_s > 0 else 0
+                sharpe_s = (mean_s / std_s) if std_s > 0 else 0
+            else:
+                sharpe_s = 0
+            if sharpe_s >= actual_sharpe:
+                random_sharpes_above += 1
+
+        p_value = random_sharpes_above / n_permutations
+        return p_value
 
     # ── Evolution Cycle ──────────────────────────────────────────────────────
     def evolve(self, symbols: list[str], population_size: int = 20, generations: int = 3) -> Strategy:
@@ -299,9 +336,32 @@ class AlgorithmLab:
                     children.append(self.breed(a, b))
                 population = children
 
-        # Promote the best
+        # Promote the best — only if statistically significant
         best = scores[0][0]
-        self.promote(best)
+        # Run a final backtest to check significance
+        best_results = []
+        for sym in symbols:
+            r = self.backtest(best, sym)
+            best_results.append(r)
+
+        all_significant = all(r.is_significant for r in best_results if r.total_trades > 0)
+        any_significant = any(r.is_significant for r in best_results if r.total_trades > 0)
+
+        if any_significant:
+            self.promote(best)
+            if not all_significant:
+                logger.warning(
+                    "Promoted %s but not all symbols are statistically significant",
+                    best.strategy_id,
+                )
+        else:
+            logger.warning(
+                "Best strategy %s is NOT statistically significant (p-values: %s). Promoting anyway as best available.",
+                best.strategy_id,
+                [r.p_value for r in best_results],
+            )
+            self.promote(best)
+
         return best
 
     # ── Promotion & Active Strategy ──────────────────────────────────────────
