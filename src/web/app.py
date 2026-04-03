@@ -69,12 +69,21 @@ def log_event(t: str, msg: str, sym: str = ""):
 
 
 def get_prices() -> dict[str, float]:
-    prices = {}
-    for s in portfolio.positions:
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    symbols = list(portfolio.positions.keys())
+    if not symbols:
+        return {}
+
+    def _fetch(s):
         try:
-            prices[s] = yf.Ticker(s).fast_info.get("lastPrice", 0)
+            return s, yf.Ticker(s).fast_info.get("lastPrice", 0)
         except Exception:
-            prices[s] = portfolio.positions[s].avg_cost
+            return s, portfolio.positions[s].avg_cost
+
+    prices = {}
+    with ThreadPoolExecutor(max_workers=min(len(symbols), 8)) as pool:
+        for result in pool.map(_fetch, symbols):
+            prices[result[0]] = result[1]
     return prices
 
 
@@ -126,24 +135,34 @@ async def api_autopilot_run():
         log_event("ERROR", str(e))
         return results
 
-    # Phase 2: Analyze top picks
+    # Phase 2: Analyze top picks IN PARALLEL
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
     end = datetime.now(UTC)
     start = end - timedelta(days=5)
     analyzed = {}
-    for r in scan_results[:6]:
-        try:
-            state = state_builder.build(r.symbol, start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d"))
-            signal = engine.decide(state)
-            analyzed[r.symbol] = {"signal": signal, "state": state, "scan": r}
-            results["analyzed"].append({
-                "symbol": r.symbol, "action": signal.action.value,
-                "confidence": signal.confidence, "reasoning": signal.reasoning[:200],
-                "price": state.technicals.current_price, "rsi": state.technicals.rsi,
-                "sentiment": state.sentiment.overall_score,
-            })
-            log_event("ANALYZE", f"{signal.action.value} ({signal.confidence:.0%})", r.symbol)
-        except Exception as e:
-            log_event("ERROR", str(e), r.symbol)
+
+    def _analyze_one(r):
+        state = state_builder.build(r.symbol, start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d"))
+        signal = engine.decide(state)
+        return r, state, signal
+
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        futures = {pool.submit(_analyze_one, r): r for r in scan_results[:6]}
+        for future in as_completed(futures):
+            r = futures[future]
+            try:
+                r, state, signal = future.result()
+                analyzed[r.symbol] = {"signal": signal, "state": state, "scan": r}
+                results["analyzed"].append({
+                    "symbol": r.symbol, "action": signal.action.value,
+                    "confidence": signal.confidence, "reasoning": signal.reasoning[:200],
+                    "price": state.technicals.current_price, "rsi": state.technicals.rsi,
+                    "sentiment": state.sentiment.overall_score,
+                })
+                log_event("ANALYZE", f"{signal.action.value} ({signal.confidence:.0%})", r.symbol)
+            except Exception as e:
+                log_event("ERROR", str(e), r.symbol)
 
     # Phase 3: Execute
     prices = get_prices()

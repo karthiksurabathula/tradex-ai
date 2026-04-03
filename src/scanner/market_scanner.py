@@ -85,37 +85,34 @@ class MarketScanner:
         return ranked[:top_n]
 
     def _scan_trending(self) -> list[ScanResult]:
-        """Find trending/most active tickers via yfinance."""
+        """Find trending/most active tickers via yfinance (parallel)."""
         results = []
-        try:
-            # yfinance trending tickers
-            trending = yf.Tickers(" ".join(self.universe[:20]))
-            for symbol in list(self.universe[:20]):
-                try:
-                    ticker = yf.Ticker(symbol)
-                    info = ticker.fast_info
-                    price = info.get("lastPrice", 0)
-                    prev_close = info.get("previousClose", price)
-                    if prev_close and prev_close > 0:
-                        change_pct = ((price - prev_close) / prev_close) * 100
-                    else:
-                        change_pct = 0.0
 
-                    # Score based on absolute move magnitude
-                    score = min(abs(change_pct) * 10, 50)
-                    if abs(change_pct) > 2:
-                        results.append(ScanResult(
-                            symbol=symbol,
-                            score=score,
-                            reason=f"Moving {change_pct:+.1f}% today",
-                            category="trending",
-                            price=price,
-                            change_pct=change_pct,
-                        ))
-                except Exception:
-                    continue
-        except Exception as e:
-            logger.error("Trending scan failed: %s", e)
+        def _check_trending(symbol: str) -> ScanResult | None:
+            try:
+                info = yf.Ticker(symbol).fast_info
+                price = info.get("lastPrice", 0)
+                prev_close = info.get("previousClose", price)
+                if prev_close and prev_close > 0:
+                    change_pct = ((price - prev_close) / prev_close) * 100
+                else:
+                    return None
+                score = min(abs(change_pct) * 10, 50)
+                if abs(change_pct) > 2:
+                    return ScanResult(symbol=symbol, score=score,
+                        reason=f"Moving {change_pct:+.1f}% today",
+                        category="trending", price=price, change_pct=change_pct)
+            except Exception:
+                pass
+            return None
+
+        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+            futures = {executor.submit(_check_trending, sym): sym for sym in self.universe[:20]}
+            for future in as_completed(futures):
+                result = future.result()
+                if result:
+                    results.append(result)
+
         return results
 
     def _scan_momentum(self) -> list[ScanResult]:
