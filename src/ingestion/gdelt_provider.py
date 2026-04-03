@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from datetime import UTC, datetime
 
 import httpx
@@ -23,14 +24,25 @@ class GdeltProvider:
     We normalize to -1.0 to +1.0 to match the NewsSentiment model.
     """
 
-    def __init__(self, timeout: float = 30.0):
+    def __init__(self, timeout: float = 30.0, request_delay: float = 1.0):
         self.client = httpx.Client(timeout=timeout)
+        self.request_delay = request_delay  # Seconds between GDELT calls to avoid 429
+        self._last_request: float = 0.0
+
+    def _throttled_get(self, url: str, params: dict) -> httpx.Response:
+        """Rate-limited GET request to avoid GDELT 429 errors."""
+        elapsed = time.time() - self._last_request
+        if elapsed < self.request_delay:
+            time.sleep(self.request_delay - elapsed)
+        resp = self.client.get(url, params=params)
+        self._last_request = time.time()
+        return resp
 
     def fetch_headlines(self, query: str = "stock market OR trading", limit: int = 20) -> list[dict]:
         """Fetch latest headlines matching a query from GDELT DOC API."""
         logger.info("Fetching GDELT headlines: %s", query)
         try:
-            resp = self.client.get(
+            resp = self._throttled_get(
                 GDELT_DOC_API,
                 params={
                     "query": query,
@@ -63,7 +75,7 @@ class GdeltProvider:
         """Compute aggregated sentiment from recent GDELT articles' tone scores."""
         logger.info("Fetching GDELT sentiment for: %s", query)
         try:
-            resp = self.client.get(
+            resp = self._throttled_get(
                 GDELT_DOC_API,
                 params={
                     "query": query,
@@ -106,7 +118,7 @@ class GdeltProvider:
     def _fetch_themes(self, query: str) -> list[str]:
         """Fetch top themes/topics from GDELT for context."""
         try:
-            resp = self.client.get(
+            resp = self._throttled_get(
                 GDELT_DOC_API,
                 params={
                     "query": query,
@@ -127,7 +139,7 @@ class GdeltProvider:
         """Fetch recent macro/geopolitical events from GDELT."""
         logger.info("Fetching GDELT macro events")
         try:
-            resp = self.client.get(
+            resp = self._throttled_get(
                 GDELT_DOC_API,
                 params={
                     "query": query,

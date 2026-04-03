@@ -18,10 +18,10 @@ from src.execution.terminal_ui import TerminalUI
 from src.execution.trade_log import TradeLog
 from src.feedback.prompt_tuner import PromptTuner
 from src.feedback.reviewer import TradeReviewer
-from src.ingestion.gdelt_provider import GdeltProvider
 from src.ingestion.openbb_provider import OpenBBProvider
 from src.ingestion.state_builder import StateBuilder
 from src.ingestion.worldmonitor_provider import WorldMonitorProvider
+from src.ingestion.yfinance_news_provider import YFinanceNewsProvider
 from src.reasoning.engine import ReasoningEngine
 from src.reasoning.prompt_store import PromptStore
 
@@ -54,7 +54,7 @@ def build_components(config: dict) -> dict:
         interval=config.get("data_interval", "5m"),
     )
 
-    # Sentiment provider: use GDELT (free, no key) unless WorldMonitor is configured
+    # Sentiment provider: yfinance news (free, no key, no rate limits) by default
     wm_key = config.get("worldmonitor_key", "")
     if wm_key and wm_key != "${WORLDMONITOR_API_KEY}":
         logger.info("Using WorldMonitor for sentiment (API key configured)")
@@ -63,8 +63,8 @@ def build_components(config: dict) -> dict:
             api_key=wm_key,
         )
     else:
-        logger.info("Using GDELT for sentiment (free, no API key required)")
-        sentiment_provider = GdeltProvider()
+        logger.info("Using yfinance news for sentiment (free, no API key, no rate limits)")
+        sentiment_provider = YFinanceNewsProvider()
 
     engine = ReasoningEngine(
         llm_provider=config.get("llm_provider", "anthropic"),

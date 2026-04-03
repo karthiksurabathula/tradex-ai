@@ -1,10 +1,11 @@
-"""OpenBB Platform provider for OHLCV data and technical indicators."""
+"""OpenBB Platform provider for OHLCV data + pandas-ta for technical indicators."""
 
 from __future__ import annotations
 
 import logging
 
 import pandas as pd
+import pandas_ta as ta
 from openbb import obb
 
 from src.state.models import OHLCVData, TechnicalIndicators
@@ -13,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 
 class OpenBBProvider:
-    """Fetches market data and computes technicals via OpenBB Platform v4."""
+    """Fetches market data via OpenBB, computes technicals via pandas-ta."""
 
     def __init__(self, provider: str = "yfinance", interval: str = "5m"):
         self.provider = provider
@@ -21,7 +22,7 @@ class OpenBBProvider:
 
     def fetch_ohlcv(self, symbol: str, start: str, end: str, interval: str = "1d") -> OHLCVData:
         """Fetch OHLCV data for an equity symbol."""
-        logger.info("Fetching OHLCV for %s (%s to %s)", symbol, start, end)
+        logger.info("Fetching OHLCV for %s (%s to %s, interval=%s)", symbol, start, end, interval)
         result = obb.equity.price.historical(
             symbol=symbol,
             start_date=start,
@@ -53,28 +54,46 @@ class OpenBBProvider:
         return self.fetch_ohlcv(symbol, start, end, ivl)
 
     def compute_technicals(self, symbol: str, df: pd.DataFrame) -> TechnicalIndicators:
-        """Compute RSI, MACD, and Bollinger Bands from OHLCV DataFrame."""
-        logger.info("Computing technicals for %s", symbol)
+        """Compute RSI, MACD, and Bollinger Bands using pandas-ta."""
+        logger.info("Computing technicals for %s (%d bars)", symbol, len(df))
 
-        rsi_result = obb.technical.rsi(data=df, target="close", length=14)
-        rsi_df = rsi_result.to_dataframe()
+        close = df["close"]
 
-        macd_result = obb.technical.macd(data=df, target="close")
-        macd_df = macd_result.to_dataframe()
+        # RSI
+        rsi_series = ta.rsi(close, length=14)
+        rsi_val = float(rsi_series.iloc[-1]) if rsi_series is not None and not rsi_series.empty else 50.0
 
-        bbands_result = obb.technical.bbands(data=df, target="close")
-        bbands_df = bbands_result.to_dataframe()
+        # MACD
+        macd_df = ta.macd(close)
+        if macd_df is not None and not macd_df.empty:
+            macd_signal = float(macd_df.iloc[-1, 1])  # MACDs
+            macd_hist = float(macd_df.iloc[-1, 2])     # MACDh
+        else:
+            macd_signal = 0.0
+            macd_hist = 0.0
 
-        current_price = float(df["close"].iloc[-1])
+        # Bollinger Bands
+        bb_df = ta.bbands(close)
+        if bb_df is not None and not bb_df.empty:
+            bb_lower = float(bb_df.iloc[-1, 0])   # BBL
+            bb_mid = float(bb_df.iloc[-1, 1])      # BBM
+            bb_upper = float(bb_df.iloc[-1, 2])    # BBU
+        else:
+            current = float(close.iloc[-1])
+            bb_lower = current * 0.98
+            bb_mid = current
+            bb_upper = current * 1.02
+
+        current_price = float(close.iloc[-1])
 
         return TechnicalIndicators(
             symbol=symbol,
-            rsi=float(rsi_df.iloc[-1].filter(like="RSI").iloc[0]),
-            macd_signal=float(macd_df.iloc[-1].filter(like="MACDs").iloc[0]),
-            macd_histogram=float(macd_df.iloc[-1].filter(like="MACDh").iloc[0]),
-            bb_upper=float(bbands_df.iloc[-1].filter(like="BBU").iloc[0]),
-            bb_lower=float(bbands_df.iloc[-1].filter(like="BBL").iloc[0]),
-            bb_mid=float(bbands_df.iloc[-1].filter(like="BBM").iloc[0]),
+            rsi=rsi_val,
+            macd_signal=macd_signal,
+            macd_histogram=macd_hist,
+            bb_upper=bb_upper,
+            bb_lower=bb_lower,
+            bb_mid=bb_mid,
             current_price=current_price,
         )
 
