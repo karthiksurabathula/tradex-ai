@@ -10,7 +10,8 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/python-3.11+-blue?style=flat-square" alt="Python 3.11+">
-  <img src="https://img.shields.io/badge/tests-54%20passing-brightgreen?style=flat-square" alt="Tests">
+  <img src="https://img.shields.io/badge/tests-60%20passing-brightgreen?style=flat-square" alt="Tests">
+  <img src="https://img.shields.io/badge/API%20keys-zero%20required-orange?style=flat-square" alt="Zero keys required">
   <img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="License">
 </p>
 
@@ -22,16 +23,43 @@
 
 It doesn't just backtest. It runs live against real market data, simulates trades with realistic broker fees, and refines its own decision-making prompts based on performance.
 
+**Works out of the box with zero API keys.** All data sources (yfinance, GDELT) are free and keyless. Add an Anthropic key to unlock the full LLM-powered multi-agent reasoning.
+
 ```
-┌─────────────────────────────────────────────────────┐
-│                 tradex-ai pipeline                   │
-│                                                     │
-│   Market Data ──┐                                   │
-│   (OpenBB)      ├──▶ MarketState ──▶ Multi-Agent ──▶ Paper Trade ──▶ Feedback  │
-│   News/Sentiment┘    (unified)      Reasoning       (fee-aware)     Loop       │
-│   (WorldMonitor)                    (TradingAgents)                 (nightly)  │
-└─────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────┐
+│                    tradex-ai pipeline                     │
+│                                                          │
+│   Market Data ──┐                                        │
+│   (yfinance)    ├──▶ MarketState ──▶ Multi-Agent ──▶ Paper Trade ──▶ Feedback │
+│   News/Sentiment┘    (unified)      Reasoning       (fee-aware)     Loop      │
+│   (GDELT)                           (TradingAgents)                 (nightly) │
+└──────────────────────────────────────────────────────────┘
 ```
+
+---
+
+## Zero-Config Quick Start
+
+```bash
+git clone https://github.com/karthiksurabathula/tradex-ai.git
+cd tradex-ai
+pip install -e ".[dev]"
+python -m src.main
+```
+
+That's it. No API keys, no signup, no `.env` file needed for the base system.
+
+| What you get | API key needed? |
+|---|---|
+| Live price data (equities + crypto) | No — yfinance via OpenBB |
+| Technical indicators (RSI, MACD, Bollinger) | No — OpenBB |
+| News headlines & sentiment | No — GDELT (free, 435+ sources) |
+| Paper portfolio with realistic fees | No — local SQLite |
+| Terminal dashboard | No — Rich |
+| **LLM multi-agent reasoning** | **Optional** — Anthropic key |
+| **Nightly prompt self-tuning** | **Optional** — Anthropic key |
+
+> Without an Anthropic key, the system uses a built-in **rule-based fallback engine** (RSI + MACD + Bollinger + GDELT sentiment scoring). Add `ANTHROPIC_API_KEY` to `.env` to unlock the full multi-agent AI pipeline.
 
 ---
 
@@ -50,10 +78,21 @@ Integrates with [TradingAgents](https://github.com/TauricResearch/TradingAgents)
 
 When TradingAgents isn't installed, a built-in rule-based fallback engine takes over with configurable technical/sentiment weighting (60/40 split).
 
-### Dual Data Streams → Unified State
-- **[OpenBB Platform](https://github.com/OpenBB-finance/OpenBB)** fetches OHLCV data + technical indicators for equities and crypto
-- **[WorldMonitor](https://www.worldmonitor.app/)** streams real-time news headlines, macro-sentiment scores, and geopolitical instability data
+### Dual Data Streams, Zero Keys
+- **[OpenBB Platform](https://github.com/OpenBB-finance/OpenBB)** via yfinance — OHLCV data + technical indicators for equities and crypto. Supports intraday intervals (1m, 5m, 15m, 30m, 1h, 1d). Free, no key.
+- **[GDELT](https://www.gdeltproject.org/)** — real-time global news from 435+ sources with tone/sentiment scoring. Updates every 15 minutes. Free, no key, no rate limits.
+- **[WorldMonitor](https://www.worldmonitor.app/)** — optional upgrade for richer sentiment analysis if you have an API key. The system auto-detects and uses GDELT when no WorldMonitor key is configured.
 - Both streams normalize into a single `MarketState` Pydantic object — one clean input to the reasoning engine
+
+### High-Frequency Ready
+Default config runs **6 trades per hour** per symbol with 5-minute candles:
+
+```yaml
+schedule:
+  trading_interval_minutes: 10    # Every 10 minutes
+data_interval: 5m                 # 5-minute OHLCV candles
+data_lookback_days: 5             # 5 days of intraday history
+```
 
 ### Fee-Realistic Paper Trading
 Paper trading without realistic costs is fiction. tradex-ai simulates **full traditional broker fees** on every trade:
@@ -85,7 +124,8 @@ src/
 │
 ├── ingestion/
 │   ├── openbb_provider.py     # OHLCV + technicals (equities & crypto)
-│   ├── worldmonitor_provider.py  # News headlines + macro sentiment
+│   ├── gdelt_provider.py      # News + sentiment (free, no API key)
+│   ├── worldmonitor_provider.py  # News + sentiment (optional, needs key)
 │   └── state_builder.py       # Merges both streams → MarketState
 │
 ├── reasoning/
@@ -111,49 +151,45 @@ src/
 
 ---
 
-## Quick Start
+## Setup Options
 
-### 1. Clone & Install
+### Option A: Zero keys (rule-based engine)
 
 ```bash
 git clone https://github.com/karthiksurabathula/tradex-ai.git
 cd tradex-ai
 pip install -e ".[dev]"
-```
-
-### 2. Configure API Keys
-
-```bash
-cp .env.example .env
-# Edit .env with your keys:
-#   ANTHROPIC_API_KEY=sk-ant-...
-#   WORLDMONITOR_API_KEY=...
-```
-
-### 3. Choose Your Tickers
-
-Edit `config.yaml`:
-
-```yaml
-symbols:
-  - AAPL
-  - NVDA
-  - MSFT
-  - BTC-USD
-
-starting_cash: 100000.0
-```
-
-### 4. Run
-
-```bash
 python -m src.main
 ```
 
-The bot will:
-- Trade every **30 minutes** during market hours (9 AM – 4 PM, Mon–Fri)
-- Run a **feedback cycle** at 8 PM nightly
-- Display a live terminal dashboard with portfolio, signals, and P&L
+Uses yfinance for prices, GDELT for sentiment, rule-based signals. Fully functional.
+
+### Option B: With AI reasoning (recommended)
+
+```bash
+pip install -e ".[dev]"
+cp .env.example .env
+```
+
+Edit `.env`:
+```
+ANTHROPIC_API_KEY=sk-ant-...
+```
+
+```bash
+pip install tradingagents    # Optional: enables full multi-agent pipeline
+python -m src.main
+```
+
+### Option C: Full stack (all providers)
+
+```
+ANTHROPIC_API_KEY=sk-ant-...
+WORLDMONITOR_API_BASE=https://api.worldmonitor.app
+WORLDMONITOR_API_KEY=wm-...
+```
+
+When a WorldMonitor key is present, the system automatically switches from GDELT to WorldMonitor for richer sentiment data.
 
 ---
 
@@ -162,21 +198,36 @@ The bot will:
 All settings live in `config.yaml`:
 
 ```yaml
-# Risk limits
-max_position_pct: 0.10        # Max 10% of portfolio per position
-min_confidence: 0.60           # Skip trades below 60% confidence
-min_trades_for_feedback: 10    # Minimum sample before prompt tuning
+# Tickers
+symbols: [AAPL, NVDA, MSFT, BTC-USD]
+starting_cash: 100000.0
 
-# Fee model
+# Data
+data_provider: yfinance            # Free, no key
+data_interval: 5m                  # 1m, 5m, 15m, 30m, 1h, 1d
+data_lookback_days: 5
+
+# Schedule
+schedule:
+  trading_interval_minutes: 10     # 6 trades/hour per symbol
+  market_hours_start: 9
+  market_hours_end: 16
+  feedback_hour: 20
+
+# Risk limits
+max_position_pct: 0.10            # Max 10% of portfolio per position
+min_confidence: 0.60              # Skip trades below 60% confidence
+
+# Fee model (full traditional broker)
 fees:
   commission_per_trade: 4.95
-  spread_pct_equity: 0.0002
-  spread_pct_crypto: 0.003
+  spread_pct_equity: 0.0002       # 0.02%
+  spread_pct_crypto: 0.003        # 0.30%
   sec_fee_per_million: 8.00
-  slippage_pct: 0.001
+  slippage_pct: 0.001             # 0.10%
 
-# LLM
-llm_provider: anthropic        # or openai, google, ollama
+# LLM (only needed for AI reasoning)
+llm_provider: anthropic
 deep_think_model: claude-sonnet-4-6
 quick_think_model: claude-sonnet-4-6
 ```
@@ -188,7 +239,7 @@ quick_think_model: claude-sonnet-4-6
 tradex-ai uses a **supplement, don't replace** strategy:
 
 1. **TradingAgents** runs its full multi-agent analyst pipeline (technical, sentiment, news, fundamental analysis + bull/bear debate)
-2. **OpenBB** technicals and **WorldMonitor** sentiment are injected as **supplementary context** into the Senior Trader's prompt — a "second opinion"
+2. **OpenBB** technicals and **GDELT** sentiment are injected as **supplementary context** into the Senior Trader's prompt — a "second opinion"
 3. The Senior Trader synthesizes everything into a structured decision:
 
 ```
@@ -196,7 +247,7 @@ SIGNAL: BUY
 CONFIDENCE: 0.82
 QUANTITY: 45
 REASONING: RSI at 28 (oversold) with positive MACD crossover.
-           WorldMonitor sentiment bullish (0.65) with low instability.
+           GDELT sentiment bullish (0.65) across 42 recent articles.
            Entering with reduced size due to elevated macro event count.
 ```
 
@@ -205,7 +256,7 @@ If TradingAgents is not installed, the fallback engine uses a weighted scoring m
 | Signal Source | Weight | Indicators |
 |---------------|--------|------------|
 | Technical | 60% | RSI (<30 buy / >70 sell), MACD histogram, Bollinger Band position |
-| Sentiment | 40% | WorldMonitor overall score (-1 to +1) |
+| Sentiment | 40% | GDELT tone score (-1 to +1) |
 
 Score > 0.2 → **BUY** &nbsp;|&nbsp; Score < -0.2 → **SELL** &nbsp;|&nbsp; Otherwise → **HOLD**
 
@@ -235,31 +286,33 @@ pytest -v
 ```
 
 ```
-tests/test_fees.py           ✓✓✓✓✓✓✓     7 passed
-tests/test_portfolio.py      ✓✓✓✓✓✓✓✓✓✓✓✓✓✓✓  15 passed
-tests/test_trade_log.py      ✓✓✓✓✓✓       6 passed
-tests/test_executor.py       ✓✓✓✓✓✓✓     7 passed
-tests/test_metrics.py        ✓✓✓✓✓✓       6 passed
-tests/test_reasoning.py      ✓✓✓✓✓✓       6 passed
-tests/test_state_models.py   ✓✓✓✓✓✓✓     7 passed
-─────────────────────────────────────────────
-                             54 passed in 0.5s
+tests/test_fees.py             ✓✓✓✓✓✓✓       7 passed
+tests/test_gdelt_provider.py   ✓✓✓✓✓✓         6 passed
+tests/test_portfolio.py        ✓✓✓✓✓✓✓✓✓✓✓✓✓✓✓  15 passed
+tests/test_trade_log.py        ✓✓✓✓✓✓         6 passed
+tests/test_executor.py         ✓✓✓✓✓✓✓       7 passed
+tests/test_metrics.py          ✓✓✓✓✓✓         6 passed
+tests/test_reasoning.py        ✓✓✓✓✓✓         6 passed
+tests/test_state_models.py     ✓✓✓✓✓✓✓       7 passed
+──────────────────────────────────────────────
+                               60 passed in 1.1s
 ```
 
 ---
 
 ## Tech Stack
 
-| Component | Technology | Purpose |
-|-----------|------------|---------|
-| Market Data | [OpenBB Platform](https://github.com/OpenBB-finance/OpenBB) | OHLCV, technicals, 100+ data providers |
-| News & Sentiment | [WorldMonitor](https://www.worldmonitor.app/) | 435+ feeds, macro-sentiment, instability index |
-| Reasoning | [TradingAgents](https://github.com/TauricResearch/TradingAgents) | Multi-agent LLM trading desk simulation |
-| LLM | [Claude](https://www.anthropic.com/) (Anthropic) | Senior Trader decisions + prompt tuning |
-| Data Models | [Pydantic](https://docs.pydantic.dev/) | Type-safe state management |
-| Scheduling | [APScheduler](https://apscheduler.readthedocs.io/) | Cron-based trading + feedback cycles |
-| Terminal UI | [Rich](https://github.com/Textualize/rich) | Bloomberg-style portfolio display |
-| Trade Storage | SQLite | Zero-config trade journal |
+| Component | Technology | API Key? | Purpose |
+|-----------|------------|----------|---------|
+| Market Data | [OpenBB](https://github.com/OpenBB-finance/OpenBB) + yfinance | No | OHLCV, technicals, intraday to daily |
+| News & Sentiment | [GDELT](https://www.gdeltproject.org/) | No | 435+ global news sources, tone scoring |
+| News & Sentiment | [WorldMonitor](https://www.worldmonitor.app/) | Optional | Richer sentiment, instability index |
+| Reasoning | [TradingAgents](https://github.com/TauricResearch/TradingAgents) | Optional | Multi-agent LLM trading desk |
+| LLM | [Claude](https://www.anthropic.com/) (Anthropic) | Optional | Senior Trader decisions + prompt tuning |
+| Data Models | [Pydantic](https://docs.pydantic.dev/) | No | Type-safe state management |
+| Scheduling | [APScheduler](https://apscheduler.readthedocs.io/) | No | Cron-based trading + feedback cycles |
+| Terminal UI | [Rich](https://github.com/Textualize/rich) | No | Bloomberg-style portfolio display |
+| Trade Storage | SQLite | No | Zero-config trade journal |
 
 ---
 
