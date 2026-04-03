@@ -5,7 +5,12 @@ from __future__ import annotations
 import logging
 
 import pandas as pd
-import pandas_ta as ta
+
+try:
+    import pandas_ta as ta
+except ImportError:
+    ta = None  # type: ignore[assignment]
+
 from openbb import obb
 
 from src.state.models import OHLCVData, TechnicalIndicators
@@ -54,48 +59,58 @@ class OpenBBProvider:
         return self.fetch_ohlcv(symbol, start, end, ivl)
 
     def compute_technicals(self, symbol: str, df: pd.DataFrame) -> TechnicalIndicators:
-        """Compute RSI, MACD, and Bollinger Bands using pandas-ta."""
+        """Compute RSI, MACD, and Bollinger Bands. Uses pandas-ta or ta library."""
         logger.info("Computing technicals for %s (%d bars)", symbol, len(df))
-
         close = df["close"]
+        current_price = float(close.iloc[-1])
 
-        # RSI
+        if ta is not None:
+            return self._compute_with_pandas_ta(symbol, close, current_price)
+        else:
+            return self._compute_with_ta_lib(symbol, close, current_price)
+
+    def _compute_with_pandas_ta(self, symbol: str, close: pd.Series, current_price: float) -> TechnicalIndicators:
+        """Compute using pandas_ta (preferred)."""
         rsi_series = ta.rsi(close, length=14)
         rsi_val = float(rsi_series.iloc[-1]) if rsi_series is not None and not rsi_series.empty else 50.0
 
-        # MACD
         macd_df = ta.macd(close)
         if macd_df is not None and not macd_df.empty:
-            macd_signal = float(macd_df.iloc[-1, 1])  # MACDs
-            macd_hist = float(macd_df.iloc[-1, 2])     # MACDh
+            macd_signal = float(macd_df.iloc[-1, 1])
+            macd_hist = float(macd_df.iloc[-1, 2])
         else:
-            macd_signal = 0.0
-            macd_hist = 0.0
+            macd_signal, macd_hist = 0.0, 0.0
 
-        # Bollinger Bands
         bb_df = ta.bbands(close)
         if bb_df is not None and not bb_df.empty:
-            bb_lower = float(bb_df.iloc[-1, 0])   # BBL
-            bb_mid = float(bb_df.iloc[-1, 1])      # BBM
-            bb_upper = float(bb_df.iloc[-1, 2])    # BBU
+            bb_lower, bb_mid, bb_upper = float(bb_df.iloc[-1, 0]), float(bb_df.iloc[-1, 1]), float(bb_df.iloc[-1, 2])
         else:
-            current = float(close.iloc[-1])
-            bb_lower = current * 0.98
-            bb_mid = current
-            bb_upper = current * 1.02
+            bb_lower, bb_mid, bb_upper = current_price * 0.98, current_price, current_price * 1.02
 
-        current_price = float(close.iloc[-1])
+        return TechnicalIndicators(symbol=symbol, rsi=rsi_val, macd_signal=macd_signal,
+            macd_histogram=macd_hist, bb_upper=bb_upper, bb_lower=bb_lower, bb_mid=bb_mid, current_price=current_price)
 
-        return TechnicalIndicators(
-            symbol=symbol,
-            rsi=rsi_val,
-            macd_signal=macd_signal,
-            macd_histogram=macd_hist,
-            bb_upper=bb_upper,
-            bb_lower=bb_lower,
-            bb_mid=bb_mid,
-            current_price=current_price,
-        )
+    @staticmethod
+    def _compute_with_ta_lib(symbol: str, close: pd.Series, current_price: float) -> TechnicalIndicators:
+        """Fallback: compute using `ta` library (available on PyPI, Docker-friendly)."""
+        from ta.momentum import RSIIndicator
+        from ta.trend import MACD
+        from ta.volatility import BollingerBands
+
+        rsi = RSIIndicator(close, window=14)
+        rsi_val = float(rsi.rsi().iloc[-1]) if not rsi.rsi().empty else 50.0
+
+        macd = MACD(close)
+        macd_signal = float(macd.macd_signal().iloc[-1]) if not macd.macd_signal().empty else 0.0
+        macd_hist = float(macd.macd_diff().iloc[-1]) if not macd.macd_diff().empty else 0.0
+
+        bb = BollingerBands(close)
+        bb_lower = float(bb.bollinger_lband().iloc[-1]) if not bb.bollinger_lband().empty else current_price * 0.98
+        bb_mid = float(bb.bollinger_mavg().iloc[-1]) if not bb.bollinger_mavg().empty else current_price
+        bb_upper = float(bb.bollinger_hband().iloc[-1]) if not bb.bollinger_hband().empty else current_price * 1.02
+
+        return TechnicalIndicators(symbol=symbol, rsi=rsi_val, macd_signal=macd_signal,
+            macd_histogram=macd_hist, bb_upper=bb_upper, bb_lower=bb_lower, bb_mid=bb_mid, current_price=current_price)
 
     @staticmethod
     def _is_crypto(symbol: str) -> bool:
