@@ -15,9 +15,12 @@ import pandas as pd
 import streamlit as st
 import yfinance as yf
 
+from src.agents.developer_agent import DeveloperAgent
+from src.data.quote_store import QuoteStore
 from src.execution.executor import Executor
 from src.execution.fees import FeeModel
 from src.execution.portfolio import Portfolio
+from src.execution.portfolio_store import PersistentPortfolio
 from src.execution.trade_log import TradeLog
 from src.feedback.metrics import compute_metrics
 from src.feedback.reviewer import TradeReviewer
@@ -28,8 +31,11 @@ from src.reasoning.engine import ReasoningEngine
 from src.reasoning.prompt_store import PromptStore
 from src.scanner.market_scanner import MarketScanner, ScanResult
 from src.state.models import SignalType, TradeSignal
+from src.strategy.algorithm_lab import AlgorithmLab
 from src.strategy.intraday_strategist import IntradayStrategist
+from src.strategy.market_context import MarketContextProvider
 from src.strategy.position_manager import PositionManager
+from src.strategy.risk_manager import RiskManager
 
 # ── Page Config ──────────────────────────────────────────────────────────────
 st.set_page_config(page_title="tradex-ai", layout="wide")
@@ -49,25 +55,31 @@ def init_session():
     if "init" in st.session_state:
         return
     fm = FeeModel()
-    p = Portfolio(cash=100_000.0, fee_model=fm)
+    pp = PersistentPortfolio(starting_cash=100_000.0, fee_model=fm)
     tl = TradeLog(db_path="data/trades.db")
     ps = PromptStore()
+    qs = QuoteStore()
 
     st.session_state.update({
         "init": True,
-        "portfolio": p,
+        "portfolio": pp,
         "trade_log": tl,
         "prompt_store": ps,
+        "quote_store": qs,
         "scanner": MarketScanner(),
         "strategist": IntradayStrategist(),
         "pos_mgr": PositionManager(),
+        "risk_mgr": RiskManager(),
+        "market_ctx": MarketContextProvider(),
         "engine": ReasoningEngine(),
         "state_builder": StateBuilder(
             OpenBBProvider(provider="yfinance", interval="5m"),
             YFinanceNewsProvider(),
         ),
-        "executor": Executor(p, tl, max_position_pct=0.15, min_confidence=0.30),
+        "executor": Executor(pp.portfolio, tl, max_position_pct=0.15, min_confidence=0.30),
         "reviewer": TradeReviewer(tl),
+        "algo_lab": AlgorithmLab(qs),
+        "dev_agent": DeveloperAgent(),
         "events": [],
         "scan_results": [],
         "analyzed": {},
@@ -291,7 +303,9 @@ st.divider()
 # ── Navigation ───────────────────────────────────────────────────────────────
 page = st.radio(
     "Mode",
-    ["Autopilot", "Manual Trade", "Positions", "Market Scanner", "AI Analysis", "Trade Log", "Performance", "Event Feed", "Settings"],
+    ["Autopilot", "Manual Trade", "Positions", "Market Scanner", "AI Analysis",
+     "Trade Log", "Performance", "Algorithm Lab", "Developer Agent", "Risk & Regime",
+     "Quote Store", "Event Feed", "Settings"],
     horizontal=True,
     label_visibility="collapsed",
 )
@@ -583,6 +597,15 @@ elif page == "Performance":
             st.write(f"- {p}")
     st.info(f"Recommendation: {review['recommendation']}")
 
+    # Equity curve from persistent store
+    equity_data = st.session_state.portfolio.get_equity_curve(limit=500)
+    if equity_data:
+        st.divider()
+        st.markdown("**Equity Curve (Time-Series)**")
+        eq_df = pd.DataFrame(equity_data)
+        eq_df["timestamp"] = pd.to_datetime(eq_df["timestamp"], utc=True)
+        st.line_chart(eq_df.set_index("timestamp")["total_value"])
+
     # Prompt versions
     versions = st.session_state.prompt_store.list_versions()
     if versions:
@@ -613,6 +636,199 @@ elif page == "Event Feed":
         st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True, height=600)
     else:
         st.info("No events yet.")
+
+
+# ── PAGE: Algorithm Lab ──────────────────────────────────────────────────────
+elif page == "Algorithm Lab":
+    st.subheader("Algorithm Lab")
+    st.caption("Self-evolving strategies — genetic algorithm discovers best TA combinations.")
+
+    lab = st.session_state.algo_lab
+    qs = st.session_state.quote_store
+
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        pop_size = st.number_input("Population size", 5, 50, 15)
+    with c2:
+        gens = st.number_input("Generations", 1, 10, 3)
+    with c3:
+        evolve_syms = st.text_input("Symbols to test on", "AAPL, NVDA, TSLA")
+
+    if st.button("Evolve Strategies", type="primary"):
+        syms = [s.strip().upper() for s in evolve_syms.split(",") if s.strip()]
+        with st.spinner(f"Collecting quotes and evolving {pop_size} strategies over {gens} generations..."):
+            for s in syms:
+                qs.add_to_watchlist(s, "algo lab")
+                qs.collect(s, period="1mo", interval="1d")
+            best = lab.evolve(symbols=syms, population_size=pop_size, generations=gens)
+        st.success(f"Winner: {best.strategy_id} (gen {best.generation})")
+        st.json(best.indicators)
+
+    # Leaderboard
+    st.markdown("**Strategy Leaderboard**")
+    leaders = lab.get_leaderboard(10)
+    if leaders:
+        rows = []
+        for e in leaders:
+            active = "Yes" if e["is_active"] else ""
+            rows.append({
+                "Strategy": e["strategy_id"],
+                "Gen": e.get("generation", "?"),
+                "Avg Sharpe": f"{e['avg_sharpe']:.4f}",
+                "Win Rate": f"{e['avg_winrate']:.0%}",
+                "Trades": e["total_trades"],
+                "Active": active,
+            })
+        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+    else:
+        st.info("No strategies tested yet. Click Evolve to start.")
+
+    # Active strategy detail
+    active = lab.active_strategy
+    if active:
+        st.markdown(f"**Active Strategy:** `{active.strategy_id}` (gen {active.generation})")
+        st.write(f"Buy threshold: {active.buy_threshold}, Sell threshold: {active.sell_threshold}")
+        st.write("Indicators:")
+        for name, weight in sorted(active.indicators.items(), key=lambda x: abs(x[1]), reverse=True):
+            bar = "+" * int(abs(weight) * 20)
+            sign = "+" if weight > 0 else "-"
+            st.text(f"  {name:<15} {sign}{abs(weight):.3f}  [{bar}]")
+
+
+# ── PAGE: Developer Agent ────────────────────────────────────────────────────
+elif page == "Developer Agent":
+    st.subheader("Developer Agent")
+    st.caption("AI sub-agent that writes new technical analysis algorithms on demand.")
+
+    dev = st.session_state.dev_agent
+
+    desc = st.text_area("Describe the indicator you want", placeholder="e.g., Detect mean reversion using z-score of price vs 20-day SMA")
+    name = st.text_input("Indicator name (optional)", placeholder="mean_rev")
+
+    if st.button("Create Indicator", type="primary") and desc:
+        with st.spinner("Developer agent writing and validating code..."):
+            result = dev.create_indicator(desc, name or None)
+        if result["status"] == "success":
+            st.success(result["message"])
+            st.code(result["code"], language="python")
+        else:
+            st.error(result["message"])
+            if result.get("code"):
+                st.code(result["code"], language="python")
+
+    # Delegate arbitrary task
+    st.divider()
+    task = st.text_input("Or delegate a task", placeholder="e.g., Build a volatility squeeze detector")
+    if st.button("Delegate") and task:
+        with st.spinner("Working..."):
+            result = dev.delegate(task)
+        st.json(result)
+
+    # List custom algorithms
+    st.divider()
+    st.markdown("**Custom Algorithms**")
+    algos = dev.list_custom_algorithms()
+    if algos:
+        st.dataframe(pd.DataFrame(algos), use_container_width=True, hide_index=True)
+    else:
+        st.info("No custom algorithms yet.")
+
+    # Task log
+    if dev.task_log:
+        st.divider()
+        st.markdown("**Agent Task Log**")
+        for t in reversed(dev.task_log[-10:]):
+            st.text(f"  {t['time'][:19]}  [{t['type']}]  {t['message'][:80]}")
+
+
+# ── PAGE: Risk & Regime ──────────────────────────────────────────────────────
+elif page == "Risk & Regime":
+    st.subheader("Risk Management & Market Regime")
+
+    # Market regime
+    st.markdown("**Current Market Regime**")
+    try:
+        ctx = st.session_state.market_ctx.get_context()
+        rc1, rc2, rc3, rc4 = st.columns(4)
+        regime_colors = {"BULL": "green", "BEAR": "red", "VOLATILE": "orange", "SIDEWAYS": "gray"}
+        rc1.metric("Regime", ctx.regime.value)
+        rc2.metric("VIX", f"{ctx.vix:.1f}")
+        rc3.metric("SPY", f"{ctx.spy_change_pct:+.1f}%")
+        rc4.metric("Position Size Mult.", f"{ctx.position_size_multiplier:.1f}x")
+
+        st.caption(f"Stop-loss multiplier: {ctx.stop_loss_multiplier:.1f}x | Confidence: {ctx.regime_confidence:.0%}")
+    except Exception as e:
+        st.warning(f"Could not fetch market context: {e}")
+
+    st.divider()
+
+    # Risk manager status
+    st.markdown("**Risk Controls**")
+    risk = st.session_state.risk_mgr
+    status = risk.status
+    rs1, rs2, rs3 = st.columns(3)
+    rs1.metric("Halted", "YES" if status["halted"] else "No")
+    rs2.metric("Kill Switch", "ACTIVE" if status["kill_switch"] else "Off")
+    rs3.metric("Trades Today", status["trades_today"])
+
+    if status["halted"]:
+        st.error(f"Trading halted: {status['halt_reason']}")
+
+    # Kill switch controls
+    st.divider()
+    ks1, ks2 = st.columns(2)
+    with ks1:
+        if st.button("ACTIVATE Kill Switch", type="secondary"):
+            RiskManager.activate_kill_switch("Manual activation from dashboard")
+            st.error("Kill switch activated! All trading halted.")
+            st.rerun()
+    with ks2:
+        if st.button("Deactivate Kill Switch"):
+            RiskManager.deactivate_kill_switch()
+            st.success("Kill switch deactivated.")
+            st.rerun()
+
+
+# ── PAGE: Quote Store ────────────────────────────────────────────────────────
+elif page == "Quote Store":
+    st.subheader("Quote Store")
+    st.caption("Persistent time-series database for backtesting and strategy evolution.")
+
+    qs = st.session_state.quote_store
+
+    # Watchlist
+    st.markdown("**Watchlist**")
+    wl = qs.get_watchlist()
+    if wl:
+        st.dataframe(pd.DataFrame(wl), use_container_width=True, hide_index=True)
+    else:
+        st.info("Watchlist empty.")
+
+    # Add to watchlist
+    qc1, qc2 = st.columns([3, 1])
+    with qc1:
+        new_sym = st.text_input("Add symbol", placeholder="AAPL")
+    with qc2:
+        if st.button("Add") and new_sym:
+            qs.add_to_watchlist(new_sym.strip().upper(), "manual add")
+            st.rerun()
+
+    # Collect quotes
+    st.divider()
+    if st.button("Collect Quotes for Watchlist", type="primary"):
+        with st.spinner("Collecting..."):
+            results = qs.collect_watchlist(period="1mo", interval="1d")
+        st.success(f"Collected for {len(results)} symbols: {results}")
+
+    # Quote inventory
+    st.divider()
+    st.markdown("**Stored Quotes**")
+    syms = qs.get_symbols_with_quotes()
+    if syms:
+        st.dataframe(pd.DataFrame(syms), use_container_width=True, hide_index=True)
+        st.metric("Total Quotes", qs.get_quote_count())
+    else:
+        st.info("No quotes stored yet.")
 
 
 # ── PAGE: Settings ───────────────────────────────────────────────────────────

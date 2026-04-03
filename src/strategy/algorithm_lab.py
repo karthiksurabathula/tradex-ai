@@ -165,16 +165,29 @@ class AlgorithmLab:
         return child
 
     # ── Backtesting ──────────────────────────────────────────────────────────
-    def backtest(self, strategy: Strategy, symbol: str, interval: str = "5m") -> BacktestResult:
-        """Backtest a strategy on stored quote data."""
+    def backtest(self, strategy: Strategy, symbol: str, interval: str = "5m",
+                 walk_forward: bool = True, fee_per_trade_pct: float = 0.002) -> BacktestResult:
+        """Backtest a strategy on stored quote data.
+
+        Args:
+            walk_forward: If True, train on first 70%, test on last 30% (prevents overfitting).
+            fee_per_trade_pct: Round-trip fee as % of notional (default 0.2% = ~$4.95 on $2500 trade).
+        """
         df = self.quote_store.get_quotes(symbol, interval=interval, limit=5000)
         if df.empty or len(df) < 50:
             return BacktestResult(strategy_id=strategy.strategy_id, symbol=symbol)
 
-        signals = strategy.compute_signal(df)
-        close = df["close"]
+        # Walk-forward: only test on out-of-sample data
+        if walk_forward and len(df) > 100:
+            split = int(len(df) * 0.7)
+            test_df = df.iloc[split:].reset_index(drop=True)
+        else:
+            test_df = df
 
-        # Simulate trades
+        signals = strategy.compute_signal(test_df)
+        close = test_df["close"]
+
+        # Simulate trades with fees
         position = 0  # 0 = flat, 1 = long
         entry_price = 0.0
         pnls = []
@@ -187,14 +200,16 @@ class AlgorithmLab:
                 position = 1
                 entry_price = price
             elif position == 1 and sig < strategy.sell_threshold:
-                pnl = (price - entry_price) / entry_price
-                pnls.append(pnl)
+                gross_pnl = (price - entry_price) / entry_price
+                net_pnl = gross_pnl - fee_per_trade_pct  # Deduct round-trip fees
+                pnls.append(net_pnl)
                 position = 0
 
-        # Close any open position
+        # Close any open position (with fees)
         if position == 1:
-            pnl = (close.iloc[-1] - entry_price) / entry_price
-            pnls.append(pnl)
+            gross_pnl = (close.iloc[-1] - entry_price) / entry_price
+            net_pnl = gross_pnl - fee_per_trade_pct
+            pnls.append(net_pnl)
 
         if not pnls:
             return BacktestResult(strategy_id=strategy.strategy_id, symbol=symbol)

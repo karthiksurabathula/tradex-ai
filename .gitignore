@@ -12,7 +12,11 @@ venv/
 
 # Data (generated at runtime)
 data/trades.db
+data/portfolio.db
+data/quotes.db
+data/algorithm_lab.db
 data/prompt_versions/
+data/custom_algorithms/
 
 # IDE
 .vscode/

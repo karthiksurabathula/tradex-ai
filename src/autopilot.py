@@ -24,9 +24,10 @@ from rich.text import Text
 from rich.layout import Layout
 from rich.columns import Columns
 
+from src.data.quote_store import QuoteStore
 from src.execution.executor import Executor
 from src.execution.fees import FeeModel
-from src.execution.portfolio import Portfolio
+from src.execution.portfolio_store import PersistentPortfolio
 from src.execution.trade_log import TradeLog
 from src.ingestion.openbb_provider import OpenBBProvider
 from src.ingestion.state_builder import StateBuilder
@@ -34,7 +35,9 @@ from src.ingestion.yfinance_news_provider import YFinanceNewsProvider
 from src.reasoning.engine import ReasoningEngine
 from src.scanner.market_scanner import MarketScanner
 from src.strategy.intraday_strategist import IntradayStrategist
+from src.strategy.market_context import MarketContextProvider, EarningsCalendar, VolatilityAdjuster
 from src.strategy.position_manager import PositionManager
+from src.strategy.risk_manager import RiskManager, RateLimiter
 
 logging.basicConfig(level=logging.WARNING, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -54,10 +57,11 @@ class Autopilot:
         self.scan_interval = scan_interval
         self.monitor_interval = monitor_interval
 
-        # Core components
+        # Core components — persistent portfolio survives restarts
         fee_model = FeeModel()
-        self.portfolio = Portfolio(cash=starting_cash, fee_model=fee_model)
+        self.portfolio = PersistentPortfolio(starting_cash=starting_cash, fee_model=fee_model)
         self.trade_log = TradeLog(db_path="data/trades.db")
+        self.quote_store = QuoteStore()
 
         # Scanner
         self.scanner = MarketScanner()
@@ -78,6 +82,18 @@ class Autopilot:
             max_hold_minutes=240 if aggressive else 180,
         )
 
+        # Risk manager — circuit breakers, daily limits, kill switch
+        self.risk_manager = RiskManager(
+            daily_loss_limit_pct=0.02 if aggressive else 0.015,
+            max_trades_per_day=80 if aggressive else 50,
+        )
+
+        # Market context — regime detection, earnings, volatility
+        self.market_context = MarketContextProvider()
+        self.earnings_cal = EarningsCalendar()
+        self.vol_adjuster = VolatilityAdjuster()
+        self.rate_limiter = RateLimiter(calls_per_second=2.0)
+
         # Reasoning engine for trade confirmation
         self.engine = ReasoningEngine()
         self.state_builder = StateBuilder(
@@ -85,9 +101,9 @@ class Autopilot:
             YFinanceNewsProvider(),
         )
 
-        # Executor
+        # Executor — uses persistent portfolio
         self.executor = Executor(
-            self.portfolio, self.trade_log,
+            self.portfolio.portfolio, self.trade_log,
             max_position_pct=0.20 if aggressive else 0.15,
             min_confidence=0.30 if aggressive else 0.40,
         )
@@ -111,6 +127,25 @@ class Autopilot:
 
     def scan_and_enter(self):
         """Phase 1: Scan market for opportunities and enter positions."""
+        current_prices = self._get_current_prices()
+        portfolio_value = self.portfolio.total_value(current_prices)
+
+        # Initialize daily risk tracking
+        self.risk_manager.reset_daily(portfolio_value)
+
+        # Check risk manager — can we trade at all?
+        can_trade, reason = self.risk_manager.can_trade(portfolio_value)
+        if not can_trade:
+            self.log_event("HALTED", reason)
+            return
+
+        # Get market regime
+        try:
+            ctx = self.market_context.get_context()
+            self.log_event("REGIME", f"{ctx.regime.value} (VIX: {ctx.vix:.1f}, SPY: {ctx.spy_change_pct:+.1f}%)")
+        except Exception:
+            ctx = None
+
         self.log_event("SCAN", "Scanning market for opportunities...")
 
         try:
@@ -123,58 +158,100 @@ class Autopilot:
             self.log_event("SCAN", "No opportunities found.")
             return
 
-        # Log top opportunities
         for r in scan_results[:5]:
             self.log_event("FOUND", f"Score {r.score:.0f}: {r.reason}", r.symbol)
 
-        # Get current prices for portfolio valuation
-        current_prices = self._get_current_prices()
-
-        # Check emergency exit first
-        if self.strategist.should_exit_all(self.portfolio, current_prices):
-            self.log_event("EMERGENCY", "Portfolio loss > 5%! Exiting all positions.")
+        # Check emergency exit
+        if self.strategist.should_exit_all(self.portfolio.portfolio, current_prices):
+            self.log_event("EMERGENCY", "Portfolio loss > 5%! Exiting all.")
             self._exit_all_positions(current_prices)
             return
 
         # Select and size opportunities
         opportunities = self.strategist.select_opportunities(
-            scan_results, self.portfolio, current_prices
+            scan_results, self.portfolio.portfolio, current_prices
         )
 
         if not opportunities:
             self.log_event("STRATEGY", "No actionable opportunities after filtering.")
             return
 
-        # Execute entries
+        # Execute entries with full safety checks
         for opp in opportunities:
-            self.log_event("ENTRY", f"Entering {opp.direction} {opp.quantity} shares (score: {opp.score:.0f}, {opp.reason})", opp.symbol)
+            # Rate limit
+            self.rate_limiter.wait()
 
-            # Quick confirmation via reasoning engine
+            # Earnings check
+            has_earnings, earn_msg = self.earnings_cal.has_upcoming_earnings(opp.symbol)
+            if has_earnings:
+                self.log_event("SKIP", f"Earnings: {earn_msg}", opp.symbol)
+                continue
+
+            # Sector concentration check
+            ok, sector_msg = self.risk_manager.check_sector_exposure(
+                opp.symbol, self.portfolio.positions, current_prices, portfolio_value
+            )
+            if not ok:
+                self.log_event("SKIP", sector_msg, opp.symbol)
+                continue
+
+            # Correlation check
+            ok, corr_msg = self.risk_manager.check_correlation(
+                opp.symbol, list(self.portfolio.positions.keys())
+            )
+            if not ok:
+                self.log_event("SKIP", corr_msg, opp.symbol)
+                continue
+
+            # Adjust quantity for volatility and regime
+            quantity = opp.quantity
+            if ctx:
+                quantity = int(quantity * ctx.position_size_multiplier)
+                if quantity <= 0:
+                    self.log_event("SKIP", f"Regime {ctx.regime.value} reduced qty to 0", opp.symbol)
+                    continue
+
+            self.log_event("ENTRY", f"{opp.direction} {quantity} shares (score: {opp.score:.0f}, {opp.reason})", opp.symbol)
+
             try:
+                self.rate_limiter.wait()
                 end = datetime.now(UTC)
                 start = end - timedelta(days=5)
                 state = self.state_builder.build(opp.symbol, start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d"))
                 signal = self.engine.decide(state)
 
-                # Only enter if reasoning agrees with scanner
                 if signal.action.value == "SELL" and opp.direction == "BUY":
-                    self.log_event("VETO", f"Reasoning engine vetoed BUY (says SELL)", opp.symbol)
+                    self.log_event("VETO", "Reasoning engine vetoed BUY (says SELL)", opp.symbol)
                     continue
 
-                fees = self.portfolio.buy(opp.symbol, opp.quantity, opp.price)
+                fees = self.portfolio.buy(opp.symbol, quantity, opp.price)
                 if fees:
+                    # Volatility-adjusted stop-loss
+                    adj_stop = self.vol_adjuster.adjusted_stop_loss(opp.symbol, opp.price)
                     self.position_manager.register_entry(opp.symbol, opp.price)
-                    self.trades_today += 1
-                    self.log_event("EXECUTED", f"BOUGHT {opp.quantity} @ ${opp.price:,.2f} (fees: ${fees['total']:,.2f})", opp.symbol)
+                    if opp.symbol in self.position_manager.rules:
+                        self.position_manager.rules[opp.symbol].stop_loss_pct = (opp.price - adj_stop) / opp.price
 
-                    # Log to trade log
+                    self.trades_today += 1
+                    self.risk_manager.record_trade()
+
+                    # Collect quotes for this symbol
+                    self.quote_store.add_to_watchlist(opp.symbol, opp.reason)
+                    self.quote_store.collect(opp.symbol, period="5d", interval="5m")
+
+                    self.log_event("EXECUTED", f"BOUGHT {quantity} @ ${opp.price:,.2f} (fees: ${fees['total']:,.2f})", opp.symbol)
+
                     from src.state.models import TradeSignal, SignalType
                     self.trade_log.record(
                         TradeSignal(symbol=opp.symbol, action=SignalType.BUY, confidence=opp.score / 100, reasoning=opp.reason),
-                        price=opp.price, executed=True, quantity=opp.quantity, fees=fees,
+                        price=opp.price, executed=True, quantity=quantity, fees=fees,
                     )
+
+                    # Record equity curve point
+                    current_prices[opp.symbol] = opp.price
+                    self.portfolio.record_equity(current_prices)
                 else:
-                    self.log_event("FAILED", f"Insufficient cash for {opp.quantity} shares", opp.symbol)
+                    self.log_event("FAILED", f"Insufficient cash for {quantity} shares", opp.symbol)
 
             except Exception as e:
                 self.log_event("ERROR", f"Entry failed: {e}", opp.symbol)
@@ -185,6 +262,14 @@ class Autopilot:
             return
 
         current_prices = self._get_current_prices()
+
+        # Check risk manager first
+        portfolio_value = self.portfolio.total_value(current_prices)
+        can_trade, reason = self.risk_manager.can_trade(portfolio_value)
+        if not can_trade and "loss limit" in reason.lower():
+            self.log_event("HALTED", f"Closing all: {reason}")
+            self._exit_all_positions(current_prices)
+            return
 
         # Check exit conditions
         exit_signals = self.position_manager.check_exits(current_prices)
@@ -198,6 +283,13 @@ class Autopilot:
                 if result:
                     self.position_manager.remove(exit_sig.symbol)
                     self.trades_today += 1
+                    self.risk_manager.record_trade()
+
+                    # Track losses for cooldown
+                    if result["net_pnl"] < 0:
+                        pnl_pct = result["net_pnl"] / (pos.avg_cost * pos.quantity)
+                        self.risk_manager.record_loss(pnl_pct)
+
                     color = "profit" if result["net_pnl"] > 0 else "loss"
                     self.log_event(
                         "CLOSED",
@@ -206,13 +298,15 @@ class Autopilot:
                         exit_sig.symbol,
                     )
 
-                    # Log to trade log
                     from src.state.models import TradeSignal, SignalType
                     self.trade_log.record(
                         TradeSignal(symbol=exit_sig.symbol, action=SignalType.SELL, confidence=0.9, reasoning=exit_sig.reason),
                         price=exit_sig.current_price, executed=True, quantity=pos.quantity,
                         gross_pnl=result["gross_pnl"], net_pnl=result["net_pnl"], fees=result["fees"],
                     )
+
+                    # Record equity curve
+                    self.portfolio.record_equity(current_prices)
 
     def _exit_all_positions(self, prices: dict[str, float]):
         """Emergency exit all positions."""
