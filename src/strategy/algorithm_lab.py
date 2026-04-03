@@ -1,4 +1,4 @@
-"""Algorithm Lab — the broker discovers its own best TA combinations.
+"""Algorithm Lab -- the broker discovers its own best TA combinations.
 
 Tests different indicator combos + weights on historical data,
 tracks which work, evolves the strategy over time.
@@ -16,13 +16,19 @@ from __future__ import annotations
 import json
 import logging
 import random
-import sqlite3
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from pathlib import Path
 
 import pandas as pd
 
+from src.data.database import (
+    dict_cursor,
+    get_connection,
+    get_placeholder,
+    get_serial_type,
+    is_postgres,
+    upsert_sql,
+)
 from src.data.quote_store import QuoteStore
 from src.strategy.ta_registry import INDICATOR_REGISTRY, compute_indicator
 
@@ -31,7 +37,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class Strategy:
-    """A combination of indicators with weights — the broker's 'algorithm'."""
+    """A combination of indicators with weights -- the broker's 'algorithm'."""
     strategy_id: str
     indicators: dict[str, float]  # {indicator_name: weight}
     buy_threshold: float = 0.2
@@ -90,34 +96,55 @@ class AlgorithmLab:
 
     def __init__(self, quote_store: QuoteStore, db_path: str = "data/algorithm_lab.db"):
         self.quote_store = quote_store
-        Path(db_path).parent.mkdir(parents=True, exist_ok=True)
-        self.conn = sqlite3.connect(db_path)
-        self.conn.row_factory = sqlite3.Row
+        self.conn = get_connection()
         self._init_schema()
         self._active_strategy: Strategy | None = None
 
     def _init_schema(self):
-        self.conn.executescript("""
-            CREATE TABLE IF NOT EXISTS strategies (
-                strategy_id TEXT PRIMARY KEY,
-                config TEXT NOT NULL,
-                generation INTEGER DEFAULT 0,
-                created_at TEXT NOT NULL,
-                is_active INTEGER DEFAULT 0
-            );
+        serial = get_serial_type()
+        if is_postgres():
+            cur = self.conn.cursor()
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS strategies (
+                    strategy_id TEXT PRIMARY KEY,
+                    config TEXT NOT NULL,
+                    generation INTEGER DEFAULT 0,
+                    created_at TEXT NOT NULL,
+                    is_active INTEGER DEFAULT 0
+                )
+            """)
+            cur.execute(f"""
+                CREATE TABLE IF NOT EXISTS backtest_results (
+                    id {serial},
+                    strategy_id TEXT NOT NULL,
+                    symbol TEXT NOT NULL,
+                    total_trades INTEGER, wins INTEGER, losses INTEGER,
+                    total_pnl REAL, sharpe REAL, max_drawdown REAL, win_rate REAL,
+                    tested_at TEXT NOT NULL
+                )
+            """)
+        else:
+            self.conn.executescript(f"""
+                CREATE TABLE IF NOT EXISTS strategies (
+                    strategy_id TEXT PRIMARY KEY,
+                    config TEXT NOT NULL,
+                    generation INTEGER DEFAULT 0,
+                    created_at TEXT NOT NULL,
+                    is_active INTEGER DEFAULT 0
+                );
 
-            CREATE TABLE IF NOT EXISTS backtest_results (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                strategy_id TEXT NOT NULL,
-                symbol TEXT NOT NULL,
-                total_trades INTEGER, wins INTEGER, losses INTEGER,
-                total_pnl REAL, sharpe REAL, max_drawdown REAL, win_rate REAL,
-                tested_at TEXT NOT NULL
-            );
-        """)
+                CREATE TABLE IF NOT EXISTS backtest_results (
+                    id {serial},
+                    strategy_id TEXT NOT NULL,
+                    symbol TEXT NOT NULL,
+                    total_trades INTEGER, wins INTEGER, losses INTEGER,
+                    total_pnl REAL, sharpe REAL, max_drawdown REAL, win_rate REAL,
+                    tested_at TEXT NOT NULL
+                );
+            """)
         self.conn.commit()
 
-    # ── Strategy Generation ──────────────────────────────────────────────────
+    # -- Strategy Generation ------------------------------------------------------
     def generate_random_strategy(self, n_indicators: int = 4) -> Strategy:
         """Create a random strategy with N indicators and random weights."""
         available = list(INDICATOR_REGISTRY.keys())
@@ -135,7 +162,7 @@ class AlgorithmLab:
         return strategy
 
     def breed(self, parent_a: Strategy, parent_b: Strategy) -> Strategy:
-        """Breed two strategies — crossover indicators + mutate weights."""
+        """Breed two strategies -- crossover indicators + mutate weights."""
         all_indicators = set(parent_a.indicators) | set(parent_b.indicators)
         child_indicators = {}
 
@@ -166,7 +193,7 @@ class AlgorithmLab:
         self._save_strategy(child)
         return child
 
-    # ── Backtesting ──────────────────────────────────────────────────────────
+    # -- Backtesting --------------------------------------------------------------
     def backtest(self, strategy: Strategy, symbol: str, interval: str = "5m",
                  walk_forward: bool = True, fee_per_trade_pct: float = 0.002) -> BacktestResult:
         """Backtest a strategy on stored quote data.
@@ -262,8 +289,9 @@ class AlgorithmLab:
         )
 
         # Save result
+        ph = get_placeholder()
         self.conn.execute(
-            "INSERT INTO backtest_results (strategy_id, symbol, total_trades, wins, losses, total_pnl, sharpe, max_drawdown, win_rate, tested_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+            f"INSERT INTO backtest_results (strategy_id, symbol, total_trades, wins, losses, total_pnl, sharpe, max_drawdown, win_rate, tested_at) VALUES ({', '.join([ph] * 10)})",
             (result.strategy_id, result.symbol, result.total_trades, result.wins, result.losses, result.total_pnl, result.sharpe, result.max_drawdown, result.win_rate, result.tested_at),
         )
         self.conn.commit()
@@ -298,7 +326,7 @@ class AlgorithmLab:
         p_value = random_sharpes_above / n_permutations
         return p_value
 
-    # ── Evolution Cycle ──────────────────────────────────────────────────────
+    # -- Evolution Cycle ----------------------------------------------------------
     def evolve(self, symbols: list[str], population_size: int = 20, generations: int = 3) -> Strategy:
         """Run a full evolution cycle: generate, test, breed, promote.
 
@@ -336,7 +364,7 @@ class AlgorithmLab:
                     children.append(self.breed(a, b))
                 population = children
 
-        # Promote the best — only if statistically significant
+        # Promote the best -- only if statistically significant
         best = scores[0][0]
         # Run a final backtest to check significance
         best_results = []
@@ -364,11 +392,12 @@ class AlgorithmLab:
 
         return best
 
-    # ── Promotion & Active Strategy ──────────────────────────────────────────
+    # -- Promotion & Active Strategy ----------------------------------------------
     def promote(self, strategy: Strategy):
         """Promote a strategy to active production use."""
+        ph = get_placeholder()
         self.conn.execute("UPDATE strategies SET is_active = 0")
-        self.conn.execute("UPDATE strategies SET is_active = 1 WHERE strategy_id = ?", (strategy.strategy_id,))
+        self.conn.execute(f"UPDATE strategies SET is_active = 1 WHERE strategy_id = {ph}", (strategy.strategy_id,))
         self.conn.commit()
         self._active_strategy = strategy
         logger.info("Promoted strategy %s (gen %d, %d indicators)",
@@ -378,9 +407,11 @@ class AlgorithmLab:
     def active_strategy(self) -> Strategy | None:
         if self._active_strategy:
             return self._active_strategy
-        cur = self.conn.execute("SELECT config FROM strategies WHERE is_active = 1")
+        cur = dict_cursor(self.conn)
+        cur.execute("SELECT config FROM strategies WHERE is_active = 1")
         row = cur.fetchone()
         if row:
+            row = dict(row)
             self._active_strategy = Strategy.from_dict(json.loads(row["config"]))
         return self._active_strategy
 
@@ -392,25 +423,33 @@ class AlgorithmLab:
         signals = strat.compute_signal(df)
         return float(signals.iloc[-1]) if not signals.empty else 0.0
 
-    # ── Persistence ──────────────────────────────────────────────────────────
+    # -- Persistence --------------------------------------------------------------
     def _save_strategy(self, strategy: Strategy):
+        upsert = upsert_sql(
+            "strategies",
+            ["strategy_id", "config", "generation", "created_at", "is_active"],
+            "strategy_id",
+            ["config", "generation", "created_at"],
+        )
         self.conn.execute(
-            "INSERT OR REPLACE INTO strategies (strategy_id, config, generation, created_at, is_active) VALUES (?, ?, ?, ?, 0)",
-            (strategy.strategy_id, json.dumps(strategy.to_dict()), strategy.generation, datetime.now(UTC).isoformat()),
+            upsert,
+            (strategy.strategy_id, json.dumps(strategy.to_dict()), strategy.generation, datetime.now(UTC).isoformat(), 0),
         )
         self.conn.commit()
 
     def get_leaderboard(self, limit: int = 10) -> list[dict]:
         """Top strategies by average Sharpe ratio."""
-        cur = self.conn.execute("""
+        ph = get_placeholder()
+        cur = dict_cursor(self.conn)
+        cur.execute(f"""
             SELECT s.strategy_id, s.generation, s.is_active, s.config,
                    AVG(b.sharpe) as avg_sharpe, AVG(b.win_rate) as avg_winrate,
                    SUM(b.total_trades) as total_trades
             FROM strategies s
             JOIN backtest_results b ON s.strategy_id = b.strategy_id
-            GROUP BY s.strategy_id
+            GROUP BY s.strategy_id, s.generation, s.is_active, s.config
             ORDER BY avg_sharpe DESC
-            LIMIT ?
+            LIMIT {ph}
         """, (limit,))
         return [dict(r) for r in cur.fetchall()]
 

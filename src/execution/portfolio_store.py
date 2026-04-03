@@ -1,6 +1,6 @@
-"""Persistent portfolio state — survives restarts, crash-safe.
+"""Persistent portfolio state -- survives restarts, crash-safe.
 
-Wraps Portfolio with SQLite persistence and thread-safe operations.
+Wraps Portfolio with database persistence and thread-safe operations.
 Every buy/sell is atomically saved. On startup, state is restored.
 """
 
@@ -8,11 +8,16 @@ from __future__ import annotations
 
 import json
 import logging
-import sqlite3
 import threading
 from datetime import UTC, datetime
-from pathlib import Path
 
+from src.data.database import (
+    dict_cursor,
+    get_connection,
+    get_placeholder,
+    is_postgres,
+    upsert_sql,
+)
 from src.execution.fees import FeeModel
 from src.execution.portfolio import Portfolio, Position
 
@@ -20,12 +25,10 @@ logger = logging.getLogger(__name__)
 
 
 class PersistentPortfolio:
-    """Thread-safe, crash-recoverable portfolio backed by SQLite."""
+    """Thread-safe, crash-recoverable portfolio backed by the database."""
 
     def __init__(self, db_path: str = "data/portfolio.db", starting_cash: float = 100_000.0, fee_model: FeeModel | None = None):
-        Path(db_path).parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(db_path, check_same_thread=False)
-        self._conn.row_factory = sqlite3.Row
+        self._conn = get_connection()
         self._lock = threading.Lock()
         self._fee_model = fee_model or FeeModel()
         self._starting_cash = starting_cash
@@ -33,37 +36,69 @@ class PersistentPortfolio:
         self.portfolio = self._load_or_create()
 
     def _init_schema(self):
-        self._conn.executescript("""
-            CREATE TABLE IF NOT EXISTS portfolio_state (
-                key TEXT PRIMARY KEY,
-                value TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            );
+        cur = self._conn.cursor()
+        if is_postgres():
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS portfolio_state (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS positions (
+                    symbol TEXT PRIMARY KEY,
+                    quantity INTEGER NOT NULL,
+                    avg_cost REAL NOT NULL,
+                    entry_fees REAL DEFAULT 0,
+                    opened_at TEXT NOT NULL,
+                    is_short INTEGER DEFAULT 0
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS equity_curve (
+                    timestamp TEXT PRIMARY KEY,
+                    total_value REAL,
+                    cash REAL,
+                    realized_pnl REAL,
+                    unrealized_pnl REAL,
+                    total_fees REAL,
+                    position_count INTEGER
+                )
+            """)
+        else:
+            self._conn.executescript("""
+                CREATE TABLE IF NOT EXISTS portfolio_state (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
 
-            CREATE TABLE IF NOT EXISTS positions (
-                symbol TEXT PRIMARY KEY,
-                quantity INTEGER NOT NULL,
-                avg_cost REAL NOT NULL,
-                entry_fees REAL DEFAULT 0,
-                opened_at TEXT NOT NULL,
-                is_short INTEGER DEFAULT 0
-            );
+                CREATE TABLE IF NOT EXISTS positions (
+                    symbol TEXT PRIMARY KEY,
+                    quantity INTEGER NOT NULL,
+                    avg_cost REAL NOT NULL,
+                    entry_fees REAL DEFAULT 0,
+                    opened_at TEXT NOT NULL,
+                    is_short INTEGER DEFAULT 0
+                );
 
-            CREATE TABLE IF NOT EXISTS equity_curve (
-                timestamp TEXT PRIMARY KEY,
-                total_value REAL,
-                cash REAL,
-                realized_pnl REAL,
-                unrealized_pnl REAL,
-                total_fees REAL,
-                position_count INTEGER
-            );
-        """)
+                CREATE TABLE IF NOT EXISTS equity_curve (
+                    timestamp TEXT PRIMARY KEY,
+                    total_value REAL,
+                    cash REAL,
+                    realized_pnl REAL,
+                    unrealized_pnl REAL,
+                    total_fees REAL,
+                    position_count INTEGER
+                );
+            """)
         self._conn.commit()
 
     def _load_or_create(self) -> Portfolio:
         """Load portfolio from DB or create fresh."""
-        cur = self._conn.execute("SELECT key, value FROM portfolio_state")
+        cur = dict_cursor(self._conn)
+        cur.execute("SELECT key, value FROM portfolio_state")
         state = {r["key"]: r["value"] for r in cur.fetchall()}
 
         if state:
@@ -73,13 +108,16 @@ class PersistentPortfolio:
 
             # Load positions
             positions = {}
-            for row in self._conn.execute("SELECT * FROM positions"):
+            cur2 = dict_cursor(self._conn)
+            cur2.execute("SELECT * FROM positions")
+            for row in cur2.fetchall():
+                row = dict(row)
                 positions[row["symbol"]] = Position(
                     symbol=row["symbol"],
                     quantity=row["quantity"],
                     avg_cost=row["avg_cost"],
                     entry_fees=row["entry_fees"],
-                    is_short=bool(row["is_short"]) if "is_short" in row.keys() else False,
+                    is_short=bool(row["is_short"]) if "is_short" in row else False,
                 )
 
             p = Portfolio(cash=cash, fee_model=self._fee_model, realized_pnl=realized_pnl, total_fees_paid=total_fees)
@@ -92,19 +130,21 @@ class PersistentPortfolio:
             return Portfolio(cash=self._starting_cash, fee_model=self._fee_model)
 
     def _save_state(self):
-        """Persist current portfolio state to SQLite."""
+        """Persist current portfolio state to database."""
         now = datetime.now(UTC).isoformat()
         p = self.portfolio
+        ph = get_placeholder()
 
-        self._conn.execute("INSERT OR REPLACE INTO portfolio_state VALUES (?, ?, ?)", ("cash", str(p.cash), now))
-        self._conn.execute("INSERT OR REPLACE INTO portfolio_state VALUES (?, ?, ?)", ("realized_pnl", str(p.realized_pnl), now))
-        self._conn.execute("INSERT OR REPLACE INTO portfolio_state VALUES (?, ?, ?)", ("total_fees_paid", str(p.total_fees_paid), now))
+        upsert = upsert_sql("portfolio_state", ["key", "value", "updated_at"], "key", ["value", "updated_at"])
+        self._conn.execute(upsert, ("cash", str(p.cash), now))
+        self._conn.execute(upsert, ("realized_pnl", str(p.realized_pnl), now))
+        self._conn.execute(upsert, ("total_fees_paid", str(p.total_fees_paid), now))
 
         # Sync positions
         self._conn.execute("DELETE FROM positions")
         for sym, pos in p.positions.items():
             self._conn.execute(
-                "INSERT INTO positions VALUES (?, ?, ?, ?, ?, ?)",
+                f"INSERT INTO positions VALUES ({', '.join([ph] * 6)})",
                 (sym, pos.quantity, pos.avg_cost, pos.entry_fees,
                  pos.opened_at.isoformat() if hasattr(pos.opened_at, 'isoformat') else str(pos.opened_at),
                  1 if pos.is_short else 0),
@@ -145,12 +185,18 @@ class PersistentPortfolio:
 
     def record_equity(self, prices: dict[str, float]):
         """Record a point on the equity curve for charting."""
+        ph = get_placeholder()
         with self._lock:
             p = self.portfolio
             total_value = p.total_value(prices)
             unrealized = p.total_unrealized_pnl(prices)
+            upsert = upsert_sql(
+                "equity_curve",
+                ["timestamp", "total_value", "cash", "realized_pnl", "unrealized_pnl", "total_fees", "position_count"],
+                "timestamp",
+            )
             self._conn.execute(
-                "INSERT OR REPLACE INTO equity_curve VALUES (?, ?, ?, ?, ?, ?, ?)",
+                upsert,
                 (datetime.now(UTC).isoformat(), total_value, p.cash, p.realized_pnl,
                  unrealized, p.total_fees_paid, len(p.positions)),
             )
@@ -158,8 +204,10 @@ class PersistentPortfolio:
 
     def get_equity_curve(self, limit: int = 500) -> list[dict]:
         """Get equity curve data for charting."""
-        cur = self._conn.execute(
-            "SELECT * FROM equity_curve ORDER BY timestamp DESC LIMIT ?", (limit,)
+        ph = get_placeholder()
+        cur = dict_cursor(self._conn)
+        cur.execute(
+            f"SELECT * FROM equity_curve ORDER BY timestamp DESC LIMIT {ph}", (limit,)
         )
         return [dict(r) for r in cur.fetchall()][::-1]
 

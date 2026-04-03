@@ -1,7 +1,6 @@
-"""Tests for the SQLite trade log."""
+"""Tests for the trade log."""
 
 import os
-import tempfile
 
 import pytest
 
@@ -11,13 +10,10 @@ from src.state.models import SignalType, TradeSignal
 
 @pytest.fixture
 def trade_log():
-    """Create a trade log with a temporary database."""
-    fd, path = tempfile.mkstemp(suffix=".db")
-    os.close(fd)
-    log = TradeLog(db_path=path)
+    """Create a trade log with an in-memory SQLite database."""
+    log = TradeLog()
     yield log
     log.close()
-    os.unlink(path)
 
 
 def _make_signal(symbol: str = "AAPL", action: SignalType = SignalType.BUY) -> TradeSignal:

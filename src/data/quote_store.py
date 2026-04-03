@@ -1,4 +1,4 @@
-"""Persistent quote store — collects and stores OHLCV data over time.
+"""Persistent quote store -- collects and stores OHLCV data over time.
 
 The broker builds its own historical database for backtesting,
 pattern recognition, and strategy evolution.
@@ -7,70 +7,107 @@ pattern recognition, and strategy evolution.
 from __future__ import annotations
 
 import logging
-import sqlite3
 from datetime import UTC, datetime
-from pathlib import Path
 
 import pandas as pd
 import yfinance as yf
+
+from src.data.database import (
+    dict_cursor,
+    get_connection,
+    get_placeholder,
+    insert_ignore_sql,
+    is_postgres,
+    upsert_sql,
+)
 
 logger = logging.getLogger(__name__)
 
 
 class QuoteStore:
-    """SQLite-backed time-series store for OHLCV quotes."""
+    """Database-backed time-series store for OHLCV quotes."""
 
     def __init__(self, db_path: str = "data/quotes.db"):
-        Path(db_path).parent.mkdir(parents=True, exist_ok=True)
-        self.conn = sqlite3.connect(db_path)
-        self.conn.row_factory = sqlite3.Row
+        self.conn = get_connection()
         self._init_schema()
 
     def _init_schema(self):
-        self.conn.executescript("""
-            CREATE TABLE IF NOT EXISTS quotes (
-                symbol TEXT NOT NULL,
-                timestamp TEXT NOT NULL,
-                interval TEXT NOT NULL,
-                open REAL, high REAL, low REAL, close REAL,
-                volume INTEGER,
-                PRIMARY KEY (symbol, timestamp, interval)
-            );
+        if is_postgres():
+            cur = self.conn.cursor()
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS quotes (
+                    symbol TEXT NOT NULL,
+                    timestamp TEXT NOT NULL,
+                    interval TEXT NOT NULL,
+                    open REAL, high REAL, low REAL, close REAL,
+                    volume INTEGER,
+                    PRIMARY KEY (symbol, timestamp, interval)
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS watchlist (
+                    symbol TEXT PRIMARY KEY,
+                    added_at TEXT NOT NULL,
+                    added_by TEXT DEFAULT 'broker',
+                    reason TEXT DEFAULT '',
+                    active INTEGER DEFAULT 1
+                )
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_quotes_sym_ts ON quotes(symbol, timestamp)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_quotes_interval ON quotes(interval)")
+        else:
+            self.conn.executescript("""
+                CREATE TABLE IF NOT EXISTS quotes (
+                    symbol TEXT NOT NULL,
+                    timestamp TEXT NOT NULL,
+                    interval TEXT NOT NULL,
+                    open REAL, high REAL, low REAL, close REAL,
+                    volume INTEGER,
+                    PRIMARY KEY (symbol, timestamp, interval)
+                );
 
-            CREATE TABLE IF NOT EXISTS watchlist (
-                symbol TEXT PRIMARY KEY,
-                added_at TEXT NOT NULL,
-                added_by TEXT DEFAULT 'broker',
-                reason TEXT DEFAULT '',
-                active INTEGER DEFAULT 1
-            );
+                CREATE TABLE IF NOT EXISTS watchlist (
+                    symbol TEXT PRIMARY KEY,
+                    added_at TEXT NOT NULL,
+                    added_by TEXT DEFAULT 'broker',
+                    reason TEXT DEFAULT '',
+                    active INTEGER DEFAULT 1
+                );
 
-            CREATE INDEX IF NOT EXISTS idx_quotes_sym_ts ON quotes(symbol, timestamp);
-            CREATE INDEX IF NOT EXISTS idx_quotes_interval ON quotes(interval);
-        """)
+                CREATE INDEX IF NOT EXISTS idx_quotes_sym_ts ON quotes(symbol, timestamp);
+                CREATE INDEX IF NOT EXISTS idx_quotes_interval ON quotes(interval);
+            """)
         self.conn.commit()
 
-    # ── Watchlist ────────────────────────────────────────────────────────────
+    # -- Watchlist ----------------------------------------------------------------
     def add_to_watchlist(self, symbol: str, reason: str = "", added_by: str = "broker"):
+        upsert = upsert_sql(
+            "watchlist",
+            ["symbol", "added_at", "added_by", "reason", "active"],
+            "symbol",
+            ["added_at", "added_by", "reason", "active"],
+        )
         self.conn.execute(
-            "INSERT OR REPLACE INTO watchlist (symbol, added_at, added_by, reason, active) VALUES (?, ?, ?, ?, 1)",
-            (symbol, datetime.now(UTC).isoformat(), added_by, reason),
+            upsert,
+            (symbol, datetime.now(UTC).isoformat(), added_by, reason, 1),
         )
         self.conn.commit()
         logger.info("Added %s to watchlist: %s", symbol, reason)
 
     def remove_from_watchlist(self, symbol: str):
-        self.conn.execute("UPDATE watchlist SET active = 0 WHERE symbol = ?", (symbol,))
+        ph = get_placeholder()
+        self.conn.execute(f"UPDATE watchlist SET active = 0 WHERE symbol = {ph}", (symbol,))
         self.conn.commit()
 
     def get_watchlist(self) -> list[dict]:
-        cur = self.conn.execute("SELECT * FROM watchlist WHERE active = 1 ORDER BY added_at DESC")
+        cur = dict_cursor(self.conn)
+        cur.execute("SELECT * FROM watchlist WHERE active = 1 ORDER BY added_at DESC")
         return [dict(r) for r in cur.fetchall()]
 
     def get_watchlist_symbols(self) -> list[str]:
         return [r["symbol"] for r in self.get_watchlist()]
 
-    # ── Quote Collection ─────────────────────────────────────────────────────
+    # -- Quote Collection ---------------------------------------------------------
     def collect(self, symbol: str, period: str = "5d", interval: str = "5m") -> int:
         """Fetch and store quotes for a symbol. Returns number of new bars stored."""
         try:
@@ -78,16 +115,23 @@ class QuoteStore:
             if hist.empty:
                 return 0
 
+            insert_sql = insert_ignore_sql(
+                "quotes",
+                ["symbol", "timestamp", "interval", "open", "high", "low", "close", "volume"],
+                ["symbol", "timestamp", "interval"],
+            )
+
             count = 0
             for idx, row in hist.iterrows():
                 ts = str(idx)
                 try:
                     self.conn.execute(
-                        "INSERT OR IGNORE INTO quotes (symbol, timestamp, interval, open, high, low, close, volume) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                        (symbol, ts, interval, float(row["Open"]), float(row["High"]), float(row["Low"]), float(row["Close"]), int(row["Volume"])),
+                        insert_sql,
+                        (symbol, ts, interval, float(row["Open"]), float(row["High"]),
+                         float(row["Low"]), float(row["Close"]), int(row["Volume"])),
                     )
                     count += 1
-                except sqlite3.IntegrityError:
+                except Exception:
                     pass
             self.conn.commit()
             return count
@@ -103,11 +147,13 @@ class QuoteStore:
         logger.info("Collected quotes for %d symbols", len(results))
         return results
 
-    # ── Query ────────────────────────────────────────────────────────────────
+    # -- Query --------------------------------------------------------------------
     def get_quotes(self, symbol: str, interval: str = "5m", limit: int = 1000) -> pd.DataFrame:
         """Get stored quotes as a DataFrame."""
-        cur = self.conn.execute(
-            "SELECT * FROM quotes WHERE symbol = ? AND interval = ? ORDER BY timestamp DESC LIMIT ?",
+        ph = get_placeholder()
+        cur = dict_cursor(self.conn)
+        cur.execute(
+            f"SELECT * FROM quotes WHERE symbol = {ph} AND interval = {ph} ORDER BY timestamp DESC LIMIT {ph}",
             (symbol, interval, limit),
         )
         rows = cur.fetchall()
@@ -119,15 +165,19 @@ class QuoteStore:
         return df
 
     def get_quote_count(self, symbol: str | None = None) -> int:
+        ph = get_placeholder()
         if symbol:
-            cur = self.conn.execute("SELECT COUNT(*) FROM quotes WHERE symbol = ?", (symbol,))
+            cur = self.conn.cursor()
+            cur.execute(f"SELECT COUNT(*) FROM quotes WHERE symbol = {ph}", (symbol,))
         else:
-            cur = self.conn.execute("SELECT COUNT(*) FROM quotes")
+            cur = self.conn.cursor()
+            cur.execute("SELECT COUNT(*) FROM quotes")
         return cur.fetchone()[0]
 
     def get_symbols_with_quotes(self) -> list[dict]:
         """List all symbols with quote counts."""
-        cur = self.conn.execute(
+        cur = dict_cursor(self.conn)
+        cur.execute(
             "SELECT symbol, COUNT(*) as bars, MIN(timestamp) as first, MAX(timestamp) as last FROM quotes GROUP BY symbol ORDER BY bars DESC"
         )
         return [dict(r) for r in cur.fetchall()]

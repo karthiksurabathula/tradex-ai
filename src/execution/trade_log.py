@@ -1,25 +1,30 @@
-"""SQLite-backed trade journal for logging every signal and execution."""
+"""Database-backed trade journal for logging every signal and execution."""
 
 from __future__ import annotations
 
-import sqlite3
 from datetime import UTC, datetime
-from pathlib import Path
 
+from src.data.database import (
+    dict_cursor,
+    get_connection,
+    get_placeholder,
+    get_serial_type,
+    is_postgres,
+)
 from src.state.models import TradeSignal
 
 
 class TradeLog:
     def __init__(self, db_path: str = "data/trades.db"):
-        Path(db_path).parent.mkdir(parents=True, exist_ok=True)
-        self.conn = sqlite3.connect(db_path)
-        self.conn.row_factory = sqlite3.Row
+        self.conn = get_connection()
         self._init_schema()
 
     def _init_schema(self):
-        self.conn.execute("""
+        ph = get_placeholder()
+        serial = get_serial_type()
+        self.conn.execute(f"""
             CREATE TABLE IF NOT EXISTS trades (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id {serial},
                 timestamp TEXT NOT NULL,
                 symbol TEXT NOT NULL,
                 action TEXT NOT NULL,
@@ -55,13 +60,14 @@ class TradeLog:
         """Record a trade (executed or not) with full fee breakdown."""
         fees = fees or {}
         effective_price = fees.get("effective_price", price)
+        ph = get_placeholder()
 
         self.conn.execute(
-            """INSERT INTO trades
+            f"""INSERT INTO trades
             (timestamp, symbol, action, quantity, price, effective_price,
              gross_pnl, net_pnl, fee_commission, fee_spread, fee_slippage,
              fee_sec, fee_total, confidence, reasoning, executed, reason)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            VALUES ({', '.join([ph] * 17)})""",
             (
                 datetime.now(UTC).isoformat(),
                 signal.symbol,
@@ -85,26 +91,30 @@ class TradeLog:
         self.conn.commit()
 
     def recent_trades(self, symbol: str | None = None, limit: int = 20) -> list[dict]:
+        ph = get_placeholder()
+        cur = dict_cursor(self.conn)
         if symbol:
-            cur = self.conn.execute(
-                "SELECT * FROM trades WHERE symbol = ? ORDER BY timestamp DESC LIMIT ?",
+            cur.execute(
+                f"SELECT * FROM trades WHERE symbol = {ph} ORDER BY timestamp DESC LIMIT {ph}",
                 (symbol, limit),
             )
         else:
-            cur = self.conn.execute(
-                "SELECT * FROM trades ORDER BY timestamp DESC LIMIT ?", (limit,)
+            cur.execute(
+                f"SELECT * FROM trades ORDER BY timestamp DESC LIMIT {ph}", (limit,)
             )
         return [dict(row) for row in cur.fetchall()]
 
     def performance_summary(self, symbol: str | None = None) -> dict:
         """Win rate, avg PnL, total trades, total fees for feedback loop."""
+        ph = get_placeholder()
         where = "WHERE executed = 1 AND net_pnl IS NOT NULL"
         params: tuple = ()
         if symbol:
-            where += " AND symbol = ?"
+            where += f" AND symbol = {ph}"
             params = (symbol,)
 
-        cur = self.conn.execute(
+        cur = self.conn.cursor()
+        cur.execute(
             f"""
             SELECT
                 COUNT(*) as total,

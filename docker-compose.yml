@@ -1,0 +1,32 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: tradex
+      POSTGRES_PASSWORD: tradex
+      POSTGRES_DB: tradex
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tradex"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  app:
+    build: .
+    ports:
+      - "8501:8501"
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://tradex:tradex@db:5432/tradex
+    env_file:
+      - .env
+    command: streamlit run src/dashboard.py --server.address 0.0.0.0
+
+volumes:
+  pgdata:

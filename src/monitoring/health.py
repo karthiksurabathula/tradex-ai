@@ -1,15 +1,16 @@
 """Health checks and heartbeat for the trading system.
 
-Monitors: yfinance connectivity, SQLite writability, data freshness, scheduler heartbeat.
+Monitors: yfinance connectivity, database writability, data freshness, scheduler heartbeat.
 """
 
 from __future__ import annotations
 
 import logging
-import sqlite3
 import time
 from datetime import UTC, datetime
 from pathlib import Path
+
+from src.data.database import get_connection, get_placeholder, is_postgres
 
 logger = logging.getLogger(__name__)
 
@@ -31,46 +32,48 @@ def _check_yfinance() -> dict:
         return {"name": "yfinance", "status": "error", "message": str(e)}
 
 
-def _check_sqlite() -> dict:
-    """Check if SQLite is writable with a test row."""
-    db_path = Path("data/health_check.db")
+def _check_database() -> dict:
+    """Check if the database is writable with a test row."""
     try:
-        db_path.parent.mkdir(parents=True, exist_ok=True)
-        conn = sqlite3.connect(str(db_path))
+        conn = get_connection()
+        ph = get_placeholder()
         conn.execute("CREATE TABLE IF NOT EXISTS health (ts TEXT, val TEXT)")
         now = datetime.now(UTC).isoformat()
-        conn.execute("INSERT INTO health VALUES (?, ?)", (now, "ok"))
+        conn.execute(f"INSERT INTO health VALUES ({ph}, {ph})", (now, "ok"))
         conn.commit()
-        cur = conn.execute("SELECT val FROM health ORDER BY ts DESC LIMIT 1")
+        cur = conn.cursor()
+        cur.execute("SELECT val FROM health ORDER BY ts DESC LIMIT 1")
         row = cur.fetchone()
         conn.execute("DELETE FROM health")
         conn.commit()
-        conn.close()
-        if row and row[0] == "ok":
-            return {"name": "sqlite", "status": "ok", "message": "Read/write successful"}
-        return {"name": "sqlite", "status": "error", "message": "Read-back mismatch"}
+
+        db_type = "PostgreSQL" if is_postgres() else "SQLite"
+        if row and (row[0] if not isinstance(row, dict) else row.get("val")) == "ok":
+            return {"name": "database", "status": "ok", "message": f"{db_type} read/write successful"}
+        return {"name": "database", "status": "error", "message": f"{db_type} read-back mismatch"}
     except Exception as e:
-        return {"name": "sqlite", "status": "error", "message": str(e)}
+        return {"name": "database", "status": "error", "message": str(e)}
 
 
 def _check_data_freshness() -> dict:
     """Check if last quote data is stale (> 30 minutes old)."""
     try:
-        db_path = Path("data/quotes.db")
-        if not db_path.exists():
-            return {"name": "data_freshness", "status": "warning", "message": "No quotes database found"}
+        conn = get_connection()
+        cur = conn.cursor()
+        try:
+            cur.execute("SELECT MAX(timestamp) FROM quotes")
+            row = cur.fetchone()
+        except Exception:
+            return {"name": "data_freshness", "status": "warning", "message": "No quotes table found"}
 
-        conn = sqlite3.connect(str(db_path))
-        cur = conn.execute("SELECT MAX(timestamp) FROM quotes")
-        row = cur.fetchone()
-        conn.close()
-
-        if not row or not row[0]:
+        if not row or not (row[0] if not isinstance(row, dict) else row.get("max")):
             return {"name": "data_freshness", "status": "warning", "message": "No quotes in database"}
+
+        last_val = row[0] if not isinstance(row, dict) else row.get("max")
 
         from dateutil.parser import parse as parse_dt
 
-        last_ts = parse_dt(row[0])
+        last_ts = parse_dt(last_val)
         if last_ts.tzinfo is None:
             from datetime import timezone
             last_ts = last_ts.replace(tzinfo=timezone.utc)
@@ -141,13 +144,13 @@ def run_health_check() -> list[dict]:
     """
     results = [
         _check_yfinance(),
-        _check_sqlite(),
+        _check_database(),
         _check_data_freshness(),
         _check_heartbeat(),
     ]
 
     for r in results:
         level = logging.INFO if r["status"] == "ok" else logging.WARNING
-        logger.log(level, "Health [%s]: %s — %s", r["name"], r["status"], r["message"])
+        logger.log(level, "Health [%s]: %s -- %s", r["name"], r["status"], r["message"])
 
     return results

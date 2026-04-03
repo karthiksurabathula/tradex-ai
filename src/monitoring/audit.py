@@ -1,33 +1,38 @@
 """Append-only audit trail for every decision the system makes.
 
-Every scan, entry, exit, and skip is recorded to data/audit.db.
-Rows are NEVER updated or deleted — append only.
+Every scan, entry, exit, and skip is recorded.
+Rows are NEVER updated or deleted -- append only.
 """
 
 from __future__ import annotations
 
 import json
 import logging
-import sqlite3
 from datetime import UTC, datetime
-from pathlib import Path
+
+from src.data.database import (
+    dict_cursor,
+    get_connection,
+    get_placeholder,
+    get_serial_type,
+    is_postgres,
+)
 
 logger = logging.getLogger(__name__)
 
 
 class AuditTrail:
-    """Append-only decision log backed by SQLite."""
+    """Append-only decision log backed by the database."""
 
     def __init__(self, db_path: str = "data/audit.db"):
-        Path(db_path).parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(db_path, check_same_thread=False)
-        self._conn.row_factory = sqlite3.Row
+        self._conn = get_connection()
         self._init_schema()
 
     def _init_schema(self):
-        self._conn.execute("""
+        serial = get_serial_type()
+        self._conn.execute(f"""
             CREATE TABLE IF NOT EXISTS decisions (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id {serial},
                 timestamp TEXT NOT NULL,
                 event_type TEXT NOT NULL,
                 symbol TEXT,
@@ -63,12 +68,13 @@ class AuditTrail:
         portfolio_state: dict | None = None,
     ) -> None:
         """Append a decision record. Never updates or deletes."""
+        ph = get_placeholder()
         self._conn.execute(
-            """INSERT INTO decisions
+            f"""INSERT INTO decisions
             (timestamp, event_type, symbol, action, technicals_snapshot,
              sentiment_snapshot, reasoning, signal, confidence, executed,
              portfolio_state_json)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            VALUES ({', '.join([ph] * 11)})""",
             (
                 datetime.now(UTC).isoformat(),
                 event_type,
@@ -91,14 +97,16 @@ class AuditTrail:
         limit: int = 100,
     ) -> list[dict]:
         """Retrieve recent audit entries. Optionally filter by symbol."""
+        ph = get_placeholder()
+        cur = dict_cursor(self._conn)
         if symbol:
-            cur = self._conn.execute(
-                "SELECT * FROM decisions WHERE symbol = ? ORDER BY id DESC LIMIT ?",
+            cur.execute(
+                f"SELECT * FROM decisions WHERE symbol = {ph} ORDER BY id DESC LIMIT {ph}",
                 (symbol, limit),
             )
         else:
-            cur = self._conn.execute(
-                "SELECT * FROM decisions ORDER BY id DESC LIMIT ?",
+            cur.execute(
+                f"SELECT * FROM decisions ORDER BY id DESC LIMIT {ph}",
                 (limit,),
             )
 
