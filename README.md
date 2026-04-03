@@ -1,10 +1,7 @@
 <p align="center">
   <h1 align="center">tradex-ai</h1>
   <p align="center">
-    <strong>An AI-powered paper-trading bot that thinks like a hedge fund.</strong>
-  </p>
-  <p align="center">
-    Multi-agent reasoning &bull; Real-time sentiment &bull; Fee-realistic execution &bull; Self-improving
+    <strong>Autonomous AI paper-trading bot that scans markets, picks stocks, trades, and evolves — no human needed.</strong>
   </p>
 </p>
 
@@ -12,6 +9,7 @@
   <img src="https://img.shields.io/badge/python-3.11+-blue?style=flat-square" alt="Python 3.11+">
   <img src="https://img.shields.io/badge/tests-60%20passing-brightgreen?style=flat-square" alt="Tests">
   <img src="https://img.shields.io/badge/API%20keys-zero%20required-orange?style=flat-square" alt="Zero keys required">
+  <img src="https://img.shields.io/badge/version-1.0.0-purple?style=flat-square" alt="v1.0.0">
   <img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="License">
 </p>
 
@@ -19,300 +17,257 @@
 
 ## What is this?
 
-**tradex-ai** is an automated paper-trading system that combines institutional-grade market data, global news sentiment, and LLM-powered multi-agent reasoning to make trading decisions — then learns from its own mistakes overnight.
+**tradex-ai** is a fully autonomous paper-trading system. Give it $100k in simulated money and it will:
 
-It doesn't just backtest. It runs live against real market data, simulates trades with realistic broker fees, and refines its own decision-making prompts based on performance.
+1. **Scan** 50+ stocks for momentum, volume breakouts, and sector rotation
+2. **Analyze** each opportunity with 15+ technical indicators and news sentiment
+3. **Decide** BUY/SELL/HOLD using AI multi-agent reasoning
+4. **Execute** trades with realistic broker fees ($4.95 + spread + slippage + SEC)
+5. **Monitor** positions with stop-loss, take-profit, and trailing stops
+6. **Learn** from mistakes and evolve better strategies overnight
 
-**Works out of the box with zero API keys.** All data sources (yfinance, GDELT) are free and keyless. Add an Anthropic key to unlock the full LLM-powered multi-agent reasoning.
-
-```
-┌──────────────────────────────────────────────────────────┐
-│                    tradex-ai pipeline                     │
-│                                                          │
-│   Market Data ──┐                                        │
-│   (yfinance)    ├──▶ MarketState ──▶ Multi-Agent ──▶ Paper Trade ──▶ Feedback │
-│   News/Sentiment┘    (unified)      Reasoning       (fee-aware)     Loop      │
-│   (GDELT)                           (TradingAgents)                 (nightly) │
-└──────────────────────────────────────────────────────────┘
-```
+**Zero API keys required.** All data sources are free. Add an Anthropic key to unlock the full AI reasoning engine.
 
 ---
 
-## Zero-Config Quick Start
+## Quick Start
 
 ```bash
 git clone https://github.com/karthiksurabathula/tradex-ai.git
 cd tradex-ai
 pip install -e ".[dev]"
-python -m src.main
+streamlit run src/dashboard.py
 ```
 
-That's it. No API keys, no signup, no `.env` file needed for the base system.
-
-| What you get | API key needed? |
-|---|---|
-| Live price data (equities + crypto) | No — yfinance via OpenBB |
-| Technical indicators (RSI, MACD, Bollinger) | No — OpenBB |
-| News headlines & sentiment | No — GDELT (free, 435+ sources) |
-| Paper portfolio with realistic fees | No — local SQLite |
-| Terminal dashboard | No — Rich |
-| **LLM multi-agent reasoning** | **Optional** — Anthropic key |
-| **Nightly prompt self-tuning** | **Optional** — Anthropic key |
-
-> Without an Anthropic key, the system uses a built-in **rule-based fallback engine** (RSI + MACD + Bollinger + GDELT sentiment scoring). Add `ANTHROPIC_API_KEY` to `.env` to unlock the full multi-agent AI pipeline.
+Open **http://localhost:8501** and click **Run Trading Cycle**.
 
 ---
 
-## Key Features
+## Three Ways to Run
 
-### Multi-Agent Reasoning Engine
-Integrates with [TradingAgents](https://github.com/TauricResearch/TradingAgents) — a framework that simulates a full trading desk with specialized AI agents:
-
-- **Technical Analyst** — RSI, MACD, Bollinger Bands, price action
-- **Sentiment Analyst** — market mood from social and news signals
-- **News Analyst** — macroeconomic event interpretation
-- **Fundamental Analyst** — financial metrics and valuations
-- **Bull/Bear Researchers** — structured debate mechanism
-- **Senior Trader** — final synthesis and decision
-- **Risk Manager** — portfolio-level guardrails
-
-When TradingAgents isn't installed, a built-in rule-based fallback engine takes over with configurable technical/sentiment weighting (60/40 split).
-
-### Dual Data Streams, Zero Keys
-- **[OpenBB Platform](https://github.com/OpenBB-finance/OpenBB)** via yfinance — OHLCV data + technical indicators for equities and crypto. Supports intraday intervals (1m, 5m, 15m, 30m, 1h, 1d). Free, no key.
-- **[GDELT](https://www.gdeltproject.org/)** — real-time global news from 435+ sources with tone/sentiment scoring. Updates every 15 minutes. Free, no key, no rate limits.
-- **[WorldMonitor](https://www.worldmonitor.app/)** — optional upgrade for richer sentiment analysis if you have an API key. The system auto-detects and uses GDELT when no WorldMonitor key is configured.
-- Both streams normalize into a single `MarketState` Pydantic object — one clean input to the reasoning engine
-
-### High-Frequency Ready
-Default config runs **6 trades per hour** per symbol with 5-minute candles:
-
-```yaml
-schedule:
-  trading_interval_minutes: 10    # Every 10 minutes
-data_interval: 5m                 # 5-minute OHLCV candles
-data_lookback_days: 5             # 5 days of intraday history
-```
-
-### Fee-Realistic Paper Trading
-Paper trading without realistic costs is fiction. tradex-ai simulates **full traditional broker fees** on every trade:
-
-| Cost Component | Rate | Applied On |
-|----------------|------|------------|
-| Commission | $4.95 / trade | All trades |
-| Bid-Ask Spread | 0.02% equity, 0.30% crypto | All trades |
-| Slippage | 0.10% | All trades |
-| SEC Fee | $8 / $1M notional | Sells only |
-
-Every trade logs `gross_pnl` and `net_pnl` separately. The terminal always shows cumulative fees so you never lose sight of cost drag.
-
-### Self-Correcting Feedback Loop
-Every night at 8 PM, the system:
-1. Reviews all trades from the day — win rate, P&L, Sharpe ratio, max drawdown
-2. Identifies **loss patterns** (e.g., "caught falling knife on RSI oversold signal — 5 occurrences")
-3. Uses Claude to suggest **targeted prompt refinements** for the Senior Trader agent
-4. Saves versioned prompts to disk — fully auditable, git-trackable, rollback-ready
+| Mode | Command | Description |
+|------|---------|-------------|
+| **Web Dashboard** | `streamlit run src/dashboard.py` | Full visual UI with 14 pages |
+| **Autopilot (terminal)** | `python -m src.autopilot` | Autonomous trading in terminal |
+| **CLI** | `python -m src.cli once` | Quick single-cycle check |
 
 ---
 
 ## Architecture
 
 ```
-src/
-├── state/
-│   └── models.py              # Pydantic models: MarketState, TradeSignal, etc.
-│
-├── ingestion/
-│   ├── openbb_provider.py     # OHLCV + technicals (equities & crypto)
-│   ├── gdelt_provider.py      # News + sentiment (free, no API key)
-│   ├── worldmonitor_provider.py  # News + sentiment (optional, needs key)
-│   └── state_builder.py       # Merges both streams → MarketState
-│
-├── reasoning/
-│   ├── engine.py              # TradingAgents orchestration + fallback
-│   ├── senior_trader.py       # Senior Trader prompt template
-│   ├── agent_config.py        # LLM provider configuration
-│   └── prompt_store.py        # Versioned prompt management
-│
-├── execution/
-│   ├── fees.py                # Full traditional broker fee model
-│   ├── portfolio.py           # Paper portfolio with fee-aware PnL
-│   ├── executor.py            # Signal → trade mapping + position sizing
-│   ├── trade_log.py           # SQLite trade journal
-│   └── terminal_ui.py         # Rich terminal dashboard
-│
-├── feedback/
-│   ├── reviewer.py            # Trade outcome pattern analysis
-│   ├── metrics.py             # Sharpe, drawdown, profit factor, win rate
-│   └── prompt_tuner.py        # LLM-driven prompt refinement
-│
-└── main.py                    # APScheduler orchestration loop
+  Market Data ──┐                              ┌── Stop-Loss / Take-Profit
+  (yfinance)    │                              │── Trailing Stops
+                ├──▶ Scanner ──▶ AI Reasoning ──▶ Paper Execution ──▶ Feedback Loop
+  News/Sentiment│    (50+ stocks) (multi-agent)  (fee-realistic)     (self-improving)
+  (yfinance)    │                              │── Risk Manager
+  Fundamentals ─┘                              └── Regime Detection
 ```
+
+### Module Map
+
+| Layer | Modules | What it does |
+|-------|---------|-------------|
+| **Data Ingestion** | `openbb_provider`, `yfinance_news_provider`, `fundamental_provider` | OHLCV, technicals, news sentiment, P/E ratios |
+| **Market Scanner** | `market_scanner` | Scans 50+ stocks for momentum, volume, sectors |
+| **AI Reasoning** | `engine`, `senior_trader`, `ensemble` | Multi-agent or rule-based signals with consensus voting |
+| **Strategy** | `algorithm_lab`, `ta_registry`, `intraday_strategist` | 15+ indicators, genetic evolution, position sizing |
+| **Execution** | `portfolio`, `portfolio_store`, `executor`, `fees` | Paper trades with full broker fees, persistent state |
+| **Risk Management** | `risk_manager`, `position_manager`, `market_context` | Circuit breakers, PDT rules, VaR, sector limits |
+| **Feedback** | `reviewer`, `metrics`, `prompt_tuner` | Nightly review, pattern detection, prompt refinement |
+| **Monitoring** | `alerts`, `audit`, `health`, `logging_config` | Alerts, audit trail, health checks, structured logs |
+| **Agents** | `developer_agent` | AI writes custom indicators on demand |
 
 ---
 
-## Setup Options
+## Key Features
 
-### Option A: Zero keys (rule-based engine)
+### Autonomous Trading (Autopilot)
+The bot runs fully independently — scans, decides, trades, monitors, exits:
+- Scans 50+ S&P 500 stocks + crypto every 5 minutes
+- AI confirms each trade before execution (scanner + reasoning must agree)
+- Manages positions with automatic stop-loss, take-profit, trailing stops
+- Force-exits after 3 hours (intraday only)
 
-```bash
-git clone https://github.com/karthiksurabathula/tradex-ai.git
-cd tradex-ai
-pip install -e ".[dev]"
-python -m src.main
+### Self-Evolving Strategies (Algorithm Lab)
+The AI discovers its own best indicator combinations through genetic evolution:
+- 15 built-in indicators: RSI, MACD, ADX, EMA Cross, Supertrend, Bollinger Bands, Keltner, ATR, OBV, VWAP, MFI, StochRSI, CCI, Williams %R, ROC
+- Generates random strategies, backtests with fees + walk-forward testing
+- Tests statistical significance (Monte Carlo, p < 0.05)
+- Breeds winners, promotes the best to production
+
+### Developer Agent
+An AI sub-agent that writes new technical analysis code on demand:
+```
+"Create a mean reversion indicator using z-score" → Python code → validated → registered
 ```
 
-Uses yfinance for prices, GDELT for sentiment, rule-based signals. Fully functional.
+### Risk Management
+| Control | What it does |
+|---------|-------------|
+| Daily loss limit | Halts trading after -1.5% daily loss |
+| Kill switch | One-click emergency halt (file-based) |
+| Sector cap | Max 30% portfolio in any single sector |
+| Correlation filter | Rejects trades >0.7 correlated with holdings |
+| Earnings avoidance | Skips stocks with earnings in 3 days |
+| PDT compliance | Tracks round-trip day trades (pattern day trader rule) |
+| VaR calculation | Historical + parametric Value-at-Risk |
+| Cooldown | 30-min pause after any >2% loss trade |
+| Max trades/day | Hard limit of 50 trades (prevents overtrading) |
 
-### Option B: With AI reasoning (recommended)
+### Market Regime Detection
+| Regime | VIX | Position Size | Description |
+|--------|-----|---------------|-------------|
+| BULL | < 15 | 100% | Low vol, uptrend |
+| SIDEWAYS | 15-20 | 80% | No clear direction |
+| VOLATILE | 20-25 | 50% | High vol, choppy |
+| BEAR | > 25 | 30% | Downtrend, defensive |
 
-```bash
-pip install -e ".[dev]"
-cp .env.example .env
-```
+### Fee-Realistic Paper Trading
+| Cost | Rate | Applied On |
+|------|------|-----------|
+| Commission | $4.95/trade | All trades |
+| Spread | 0.02% equity, 0.30% crypto | All trades |
+| Slippage | 0.10% | All trades |
+| SEC Fee | $8/$1M notional | Sells only |
 
-Edit `.env`:
-```
-ANTHROPIC_API_KEY=sk-ant-...
-```
+### Short Selling
+Portfolio supports both long and short positions with proper margin calculation and P&L tracking.
 
-```bash
-pip install tradingagents    # Optional: enables full multi-agent pipeline
-python -m src.main
-```
+### Persistent State
+Portfolio state survives restarts (SQLite-backed), including positions, cash, fees, and equity curve history.
 
-### Option C: Full stack (all providers)
+### Monitoring & Observability
+- **Structured logging** — JSON logs with rotating files
+- **Slack alerts** — large losses, kill switch, system errors
+- **Health checks** — yfinance connectivity, SQLite health, data freshness
+- **Audit trail** — append-only decision log with full context
 
-```
-ANTHROPIC_API_KEY=sk-ant-...
-WORLDMONITOR_API_BASE=https://api.worldmonitor.app
-WORLDMONITOR_API_KEY=wm-...
-```
+---
 
-When a WorldMonitor key is present, the system automatically switches from GDELT to WorldMonitor for richer sentiment data.
+## Web Dashboard (14 Pages)
+
+| Page | Description |
+|------|-------------|
+| **Autopilot** | AI scans, trades, and monitors — with auto-run toggle |
+| **Manual Trade** | Pick symbols, see AI analysis, click BUY/SELL |
+| **Positions** | Open holdings with SL/TP/trailing stop + close-all |
+| **Market Scanner** | On-demand scan with scores, categories, reasons |
+| **AI Analysis** | Full reasoning per symbol — technicals, news, decision logic |
+| **Trade Log** | Every trade with fees, P&L, reasoning — filterable |
+| **Performance** | Win rate, Sharpe, drawdown, profit factor, equity curve |
+| **Algorithm Lab** | Evolve strategies, leaderboard, active strategy detail |
+| **Developer Agent** | Create custom indicators, delegate tasks |
+| **Risk & Regime** | VIX, market regime, risk status, kill switch |
+| **Quote Store** | Watchlist, quote collection, data inventory |
+| **Event Feed** | Real-time timeline of all system activity |
+| **Settings** | Adjust risk params, view fees, reset portfolio |
+| **Help** | Step-by-step guide, onboarding wizard, full documentation |
+
+First-time users see an **onboarding wizard** with a 4-step getting started guide. Every button and metric has an info tooltip explaining what it does.
 
 ---
 
 ## Configuration
 
-All settings live in `config.yaml`:
+All settings in `config.yaml` with inline documentation:
 
 ```yaml
-# Tickers
 symbols: [AAPL, NVDA, MSFT, BTC-USD]
 starting_cash: 100000.0
-
-# Data
-data_provider: yfinance            # Free, no key
-data_interval: 5m                  # 1m, 5m, 15m, 30m, 1h, 1d
-data_lookback_days: 5
-
-# Schedule
-schedule:
-  trading_interval_minutes: 10     # 6 trades/hour per symbol
-  market_hours_start: 9
-  market_hours_end: 16
-  feedback_hour: 20
-
-# Risk limits
-max_position_pct: 0.10            # Max 10% of portfolio per position
-min_confidence: 0.60              # Skip trades below 60% confidence
-
-# Fee model (full traditional broker)
-fees:
-  commission_per_trade: 4.95
-  spread_pct_equity: 0.0002       # 0.02%
-  spread_pct_crypto: 0.003        # 0.30%
-  sec_fee_per_million: 8.00
-  slippage_pct: 0.001             # 0.10%
-
-# LLM (only needed for AI reasoning)
-llm_provider: anthropic
-deep_think_model: claude-sonnet-4-6
-quick_think_model: claude-sonnet-4-6
+data_interval: 5m                   # 1m, 5m, 15m, 30m, 1h, 1d
+max_position_pct: 0.10              # Max 10% per position
+stop_loss_pct: 0.02                 # 2% auto-sell
+take_profit_pct: 0.04               # 4% target
+daily_loss_limit_pct: 0.015         # Halt at -1.5% daily
+max_sector_pct: 0.30                # Max 30% per sector
 ```
+
+See `config.yaml` for full documented options.
 
 ---
 
-## How the Reasoning Works
+## Tech Stack
 
-tradex-ai uses a **supplement, don't replace** strategy:
-
-1. **TradingAgents** runs its full multi-agent analyst pipeline (technical, sentiment, news, fundamental analysis + bull/bear debate)
-2. **OpenBB** technicals and **GDELT** sentiment are injected as **supplementary context** into the Senior Trader's prompt — a "second opinion"
-3. The Senior Trader synthesizes everything into a structured decision:
-
-```
-SIGNAL: BUY
-CONFIDENCE: 0.82
-QUANTITY: 45
-REASONING: RSI at 28 (oversold) with positive MACD crossover.
-           GDELT sentiment bullish (0.65) across 42 recent articles.
-           Entering with reduced size due to elevated macro event count.
-```
-
-If TradingAgents is not installed, the fallback engine uses a weighted scoring model:
-
-| Signal Source | Weight | Indicators |
-|---------------|--------|------------|
-| Technical | 60% | RSI (<30 buy / >70 sell), MACD histogram, Bollinger Band position |
-| Sentiment | 40% | GDELT tone score (-1 to +1) |
-
-Score > 0.2 → **BUY** &nbsp;|&nbsp; Score < -0.2 → **SELL** &nbsp;|&nbsp; Otherwise → **HOLD**
+| Component | Technology | Key? |
+|-----------|------------|------|
+| Price Data | yfinance via OpenBB | No |
+| Technicals | pandas-ta (15+ indicators) | No |
+| News Sentiment | yfinance headlines | No |
+| Fundamentals | yfinance Ticker.info | No |
+| AI Reasoning | Claude (Anthropic) | Optional |
+| Multi-Agent | TradingAgents | Optional |
+| Data Models | Pydantic | No |
+| Scheduling | APScheduler | No |
+| Web UI | Streamlit | No |
+| Terminal UI | Rich | No |
+| Trade Storage | SQLite | No |
+| Strategy Evolution | Custom genetic algorithm | No |
 
 ---
 
-## Feedback & Self-Correction
+## Project Structure
 
-The nightly feedback loop detects patterns like:
-
-| Pattern | Action |
-|---------|--------|
-| Win rate < 40% | Increase HOLD threshold, tighten stop-losses |
-| 5+ consecutive losses | Pause and review strategy |
-| Profit factor < 1.0 | System losing money — needs recalibration |
-| Fees > 50% of gross P&L | Reduce trade frequency or increase position sizes |
-| Over-weighted bullish sentiment | Reduce sentiment weight from 30% → 20% |
-| RSI "falling knife" entries | Add trend confirmation requirement |
-
-Refined prompts are saved as versioned JSON files in `data/prompt_versions/`, making every change auditable and reversible.
+```
+src/
+├── main.py                    # APScheduler orchestration loop
+├── autopilot.py               # Fully autonomous trading bot
+├── cli.py                     # CLI (once, watch, status)
+├── dashboard.py               # Streamlit web dashboard (14 pages)
+│
+├── state/models.py            # Pydantic data models
+├── ingestion/                 # Data providers
+│   ├── openbb_provider.py     # OHLCV + technicals
+│   ├── yfinance_news_provider.py  # News + sentiment
+│   ├── fundamental_provider.py    # P/E, margins, revenue
+│   └── state_builder.py      # Merges all data → MarketState
+│
+├── reasoning/                 # AI decision engine
+│   ├── engine.py              # TradingAgents + fallback
+│   ├── senior_trader.py       # Senior Trader prompt
+│   └── prompt_store.py        # Versioned prompts
+│
+├── scanner/market_scanner.py  # 50+ stock momentum/volume scanner
+│
+├── strategy/                  # Strategy evolution + risk
+│   ├── algorithm_lab.py       # Genetic algorithm strategy evolution
+│   ├── ta_registry.py         # 15 built-in TA indicators
+│   ├── ensemble.py            # Multi-model consensus voting
+│   ├── intraday_strategist.py # Position sizing + capital allocation
+│   ├── position_manager.py    # SL/TP/trailing stop management
+│   ├── risk_manager.py        # Circuit breakers, PDT, sector limits
+│   ├── market_context.py      # VIX regime, earnings, ATR sizing
+│   └── var_calculator.py      # Value-at-Risk (historical + parametric)
+│
+├── execution/                 # Trade execution
+│   ├── portfolio.py           # Paper portfolio (long + short)
+│   ├── portfolio_store.py     # Persistent state (SQLite + thread-safe)
+│   ├── executor.py            # Signal → trade mapping
+│   ├── fees.py                # Full broker fee model
+│   └── trade_log.py           # SQLite trade journal
+│
+├── feedback/                  # Self-improvement
+│   ├── reviewer.py            # Trade outcome analysis
+│   ├── metrics.py             # Sharpe, drawdown, profit factor
+│   └── prompt_tuner.py        # LLM-driven prompt refinement
+│
+├── monitoring/                # Observability
+│   ├── alerts.py              # Slack + console alerts
+│   ├── audit.py               # Append-only decision log
+│   ├── health.py              # System health checks
+│   └── logging_config.py      # Structured JSON logging
+│
+├── agents/developer_agent.py  # AI code-writing sub-agent
+└── data/quote_store.py        # Persistent quote history
+```
 
 ---
 
 ## Tests
 
 ```bash
-pytest -v
+pytest -v     # 60 tests, all passing
 ```
-
-```
-tests/test_fees.py             ✓✓✓✓✓✓✓       7 passed
-tests/test_gdelt_provider.py   ✓✓✓✓✓✓         6 passed
-tests/test_portfolio.py        ✓✓✓✓✓✓✓✓✓✓✓✓✓✓✓  15 passed
-tests/test_trade_log.py        ✓✓✓✓✓✓         6 passed
-tests/test_executor.py         ✓✓✓✓✓✓✓       7 passed
-tests/test_metrics.py          ✓✓✓✓✓✓         6 passed
-tests/test_reasoning.py        ✓✓✓✓✓✓         6 passed
-tests/test_state_models.py     ✓✓✓✓✓✓✓       7 passed
-──────────────────────────────────────────────
-                               60 passed in 1.1s
-```
-
----
-
-## Tech Stack
-
-| Component | Technology | API Key? | Purpose |
-|-----------|------------|----------|---------|
-| Market Data | [OpenBB](https://github.com/OpenBB-finance/OpenBB) + yfinance | No | OHLCV, technicals, intraday to daily |
-| News & Sentiment | [GDELT](https://www.gdeltproject.org/) | No | 435+ global news sources, tone scoring |
-| News & Sentiment | [WorldMonitor](https://www.worldmonitor.app/) | Optional | Richer sentiment, instability index |
-| Reasoning | [TradingAgents](https://github.com/TauricResearch/TradingAgents) | Optional | Multi-agent LLM trading desk |
-| LLM | [Claude](https://www.anthropic.com/) (Anthropic) | Optional | Senior Trader decisions + prompt tuning |
-| Data Models | [Pydantic](https://docs.pydantic.dev/) | No | Type-safe state management |
-| Scheduling | [APScheduler](https://apscheduler.readthedocs.io/) | No | Cron-based trading + feedback cycles |
-| Terminal UI | [Rich](https://github.com/Textualize/rich) | No | Bloomberg-style portfolio display |
-| Trade Storage | SQLite | No | Zero-config trade journal |
 
 ---
 

@@ -1,3 +1,4 @@
+# Python
 __pycache__/
 *.py[cod]
 *.egg-info/
@@ -7,6 +8,7 @@ build/
 
 # Environment
 .env
+.env.local
 .venv/
 venv/
 
@@ -15,22 +17,34 @@ data/trades.db
 data/portfolio.db
 data/quotes.db
 data/algorithm_lab.db
+data/audit.db
+data/tradex.log*
 data/prompt_versions/
 data/custom_algorithms/
+data/.heartbeat
+data/.kill_switch
 
 # IDE
 .vscode/
 .idea/
 *.swp
+*.swo
 
 # OS
 .DS_Store
 Thumbs.db
 
-# Testing
+# Testing / Linting
 .pytest_cache/
 .coverage
 htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# SQLite journals
+*.db-journal
+*.db-wal
+*.db-shm
 
 # Claude
 .claude/

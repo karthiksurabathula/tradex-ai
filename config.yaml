@@ -1,49 +1,69 @@
-# AI Paper Trader Configuration
+# ═══════════════════════════════════════════════════════════════════════════════
+# tradex-ai Configuration
+# ═══════════════════════════════════════════════════════════════════════════════
 
-# Tickers to trade
+# ── Symbols to Trade ─────────────────────────────────────────────────────────
+# Autopilot scans 50+ stocks automatically, but these are used for manual mode
+# and as seed symbols for the quote store.
 symbols:
   - AAPL
   - NVDA
   - MSFT
   - BTC-USD
 
-# Portfolio
-starting_cash: 100000.0
+# ── Portfolio ────────────────────────────────────────────────────────────────
+starting_cash: 100000.0             # Paper money to start with ($)
 
-# Data provider for OpenBB (yfinance = free, no API key)
-data_provider: yfinance
+# ── Data Provider ────────────────────────────────────────────────────────────
+data_provider: yfinance             # Free, no API key needed
+data_interval: 5m                   # Valid: 1m, 2m, 5m, 15m, 30m, 1h, 1d
+data_lookback_days: 5               # Days of intraday history to fetch
 
-# Sentiment provider: GDELT is used by default (free, no key).
-# To use WorldMonitor instead, set these env vars:
+# ── Sentiment Provider ───────────────────────────────────────────────────────
+# Default: yfinance news (free, no key). Set env vars to use WorldMonitor:
 # worldmonitor_api: ${WORLDMONITOR_API_BASE}
 # worldmonitor_key: ${WORLDMONITOR_API_KEY}
 
-# LLM Configuration
+# ── LLM Configuration ───────────────────────────────────────────────────────
+# Required only for AI multi-agent reasoning + prompt tuning.
+# Without it, fallback rule-based engine is used (still functional).
 llm_provider: anthropic
 deep_think_model: claude-sonnet-4-6
 quick_think_model: claude-sonnet-4-6
 
-# Trading schedule
+# ── Trading Schedule ─────────────────────────────────────────────────────────
 schedule:
-  trading_interval_minutes: 10   # Multiple trades per hour (every 10 min)
-  market_hours_start: 9
-  market_hours_end: 16
-  feedback_hour: 20
+  trading_interval_minutes: 10      # How often to scan + trade (6x/hour)
+  market_hours_start: 9             # Start trading (local time)
+  market_hours_end: 16              # Stop trading (local time)
+  feedback_hour: 20                 # Nightly feedback loop
 
-# OHLCV data settings
-data_interval: 5m                # Intraday: 1m, 2m, 5m, 15m, 30m, 60m, 1d
-data_lookback_days: 5            # How many days of history to fetch
+# ── Risk Limits ──────────────────────────────────────────────────────────────
+max_position_pct: 0.10              # Max 10% of portfolio per position (0.01-0.50)
+min_confidence: 0.60                # Skip trades below this confidence (0.0-1.0)
+min_trades_for_feedback: 10         # Min trades before prompt tuning kicks in
+daily_loss_limit_pct: 0.015         # Halt trading after -1.5% daily loss
+max_trades_per_day: 50              # Prevent overtrading
+max_sector_pct: 0.30                # Max 30% of portfolio in any sector
+cooldown_after_loss_min: 30         # Pause trading 30 min after >2% loss
 
-# Risk limits
-max_position_pct: 0.10           # Max 10% of portfolio per position
-min_confidence: 0.60             # Minimum confidence to execute a trade
-min_trades_for_feedback: 10      # Minimum sample size before prompt tuning
+# ── Position Management ──────────────────────────────────────────────────────
+stop_loss_pct: 0.02                 # Auto-sell if price drops 2% (adjusted by ATR)
+take_profit_pct: 0.04               # Auto-sell at 4% gain
+trailing_stop_pct: 0.015            # Trailing stop at 1.5% from peak
+max_hold_minutes: 180               # Force exit after 3 hours
 
-# Fee model (full traditional)
+# ── Fee Model (Full Traditional Broker) ──────────────────────────────────────
 fees:
-  commission_per_trade: 4.95
-  spread_pct_equity: 0.0002      # 0.02%
-  spread_pct_crypto: 0.003       # 0.30%
-  sec_fee_per_million: 8.00
-  slippage_pct: 0.001            # 0.10%
-  min_commission: 1.00
+  commission_per_trade: 4.95        # Flat fee per trade ($)
+  spread_pct_equity: 0.0002         # Bid-ask spread: 0.02% for stocks
+  spread_pct_crypto: 0.003          # Bid-ask spread: 0.30% for crypto
+  sec_fee_per_million: 8.00         # SEC fee on sells: $8 per $1M notional
+  slippage_pct: 0.001               # Average slippage: 0.10%
+  min_commission: 1.00              # Minimum commission floor ($)
+
+# ── Algorithm Lab ────────────────────────────────────────────────────────────
+algo_lab:
+  population_size: 20               # Strategies per generation
+  generations: 3                    # Evolution cycles
+  min_significance: 0.05            # p-value threshold for promotion
