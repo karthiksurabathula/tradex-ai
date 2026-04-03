@@ -46,8 +46,125 @@ st.markdown("""
     div[data-testid="stMetric"] {
         background: #0e1117; padding: 8px; border-radius: 6px; border: 1px solid #262730;
     }
+    .help-tip { font-size: 0.85em; color: #888; background: #1a1a2e; padding: 8px 12px;
+                border-radius: 6px; border-left: 3px solid #4a6cf7; margin: 4px 0 12px 0; }
 </style>
 """, unsafe_allow_html=True)
+
+
+# ── Help Texts ───────────────────────────────────────────────────────────────
+HELP = {
+    "portfolio_value": "Total value of your paper portfolio: cash + value of all open positions (long and short). Starts at $100,000.",
+    "cash": "Available cash for new trades. Reduced by purchases + fees. Increases when you sell.",
+    "realized_pnl": "Profit/loss from closed trades (after fees). Only counts positions you've exited.",
+    "unrealized_pnl": "Paper profit/loss on positions you still hold. Changes with live prices.",
+    "fees": "Total broker fees paid across all trades: commission ($4.95) + spread + slippage + SEC fee.",
+    "trades_today": "Number of trades executed in the current session.",
+
+    "autopilot": "The AI autonomously scans 50+ stocks, picks the best opportunities, confirms with its reasoning engine, executes trades, and monitors positions with stop-loss/take-profit. Click 'Run Cycle' or enable 'Auto-run' to let it trade continuously.",
+    "run_cycle": "Runs one full trading cycle: (1) Scan market for movers, (2) AI analyzes top picks, (3) Execute trades that pass all filters, (4) Check existing positions for exits. Takes 30-60 seconds.",
+    "auto_run": "When enabled, the bot runs cycles automatically at the interval you set. It will keep scanning, trading, and monitoring without any human input.",
+
+    "manual_trade": "Type stock symbols (comma-separated) to analyze them. The AI evaluates technicals (RSI, MACD, Bollinger Bands), news sentiment, and gives a BUY/SELL/HOLD recommendation. You can then manually execute trades with the buttons.",
+    "analyze_btn": "Fetches live price data, computes 15+ technical indicators, and runs the AI reasoning engine to produce a trading signal for each symbol.",
+
+    "positions": "Shows all open positions (long and short) with entry price, current price, P&L, and risk levels. Stop-loss automatically sells if price drops too far. Take-profit locks in gains. Trailing stop follows the price up.",
+    "stop_loss": "Automatic sell trigger if price drops below this level. Protects against large losses. Adjusted by volatility (ATR) — wider in volatile markets.",
+    "take_profit": "Automatic sell trigger when price reaches this target. Locks in profits at a predefined level (default: 4% gain).",
+    "trailing_stop": "Follows the price upward. If the stock rises 5% then drops 1.5% from the peak, it sells — locking in most of the gain.",
+
+    "scanner": "Scans 50+ stocks across S&P 500 and crypto for: momentum (price + volume spikes), volume breakouts (unusual trading activity), and sector rotation (strongest/weakest sectors). Each opportunity gets a score from 0-100.",
+    "scanner_score": "Higher = better opportunity. Combines momentum strength, volume ratio, and price change. Scores above 25 are considered tradeable.",
+
+    "ai_analysis": "The AI reasoning engine evaluates each stock using: RSI (overbought/oversold), MACD (trend), Bollinger Bands (volatility), and news sentiment. It produces a BUY/SELL/HOLD signal with confidence level and written reasoning.",
+
+    "trade_log": "Every trade ever executed, with full details: price, quantity, fees, P&L, and the AI's reasoning for the decision. Filter by symbol to see history for a specific stock.",
+
+    "performance": "Historical performance metrics: win rate, Sharpe ratio (risk-adjusted return), max drawdown (worst peak-to-trough loss), and profit factor (gross wins / gross losses). The equity curve shows portfolio value over time.",
+    "sharpe": "Risk-adjusted return metric. > 1.0 is good, > 2.0 is excellent, < 0 means losing money. Measures return per unit of risk.",
+    "max_drawdown": "Largest peak-to-trough decline. If portfolio went from $105k to $98k, drawdown is $7k. Lower is better.",
+    "profit_factor": "Gross winning trades / gross losing trades. > 1.0 means profitable. > 2.0 is very good.",
+
+    "algo_lab": "The AI evolves its own trading strategies using a genetic algorithm: (1) Generate random indicator combinations, (2) Backtest on historical data, (3) Breed the winners, (4) Promote the best to production. Each generation gets smarter.",
+    "evolve": "Starts a strategy evolution cycle. Creates random strategies, tests them on historical data (with fees and walk-forward validation), breeds the top performers, and promotes the winner.",
+
+    "dev_agent": "An AI sub-agent that writes new technical analysis algorithms on demand. Describe what you want in plain English (e.g., 'detect mean reversion') and it generates, validates, and registers the Python code automatically.",
+
+    "risk_regime": "Shows current market conditions: VIX (fear gauge), market regime (BULL/BEAR/VOLATILE/SIDEWAYS), and how the AI adjusts its behavior. In volatile markets, position sizes are reduced and stops are widened.",
+    "kill_switch": "Emergency halt — immediately stops ALL trading. Use if something goes wrong. Trading stays halted until you deactivate it. Can also be triggered automatically by the daily loss limit.",
+
+    "quote_store": "Persistent database of price history. The AI collects quotes for stocks it watches, building a local dataset for backtesting and strategy evolution. More data = better strategies.",
+
+    "settings": "Adjust risk parameters (stop-loss %, take-profit %, max positions), view fee model details, and reset the portfolio to start fresh.",
+}
+
+
+def info(key: str):
+    """Show an info tooltip for a help key."""
+    text = HELP.get(key, "")
+    if text:
+        st.markdown(f'<div class="help-tip">&#9432; {text}</div>', unsafe_allow_html=True)
+
+
+def help_icon(key: str) -> str:
+    """Return help text for use in Streamlit's help= parameter."""
+    return HELP.get(key, "")
+
+
+# ── Onboarding Wizard ────────────────────────────────────────────────────────
+def show_onboarding():
+    """Step-by-step guide for first-time users."""
+    if "onboarding_done" in st.session_state:
+        return
+
+    with st.expander("Welcome to tradex-ai! Click here for a quick setup guide", expanded=True):
+        st.markdown("""
+### Getting Started in 4 Steps
+
+**Step 1: Understand your portfolio**
+> You start with **$100,000 in paper money**. This is simulated — no real money is involved.
+> The top bar shows your portfolio value, cash, P&L, and fees at all times.
+
+**Step 2: Let the AI trade for you (Autopilot)**
+> Go to the **Autopilot** tab and click **"Run Cycle"**. The AI will:
+> 1. Scan 50+ stocks for momentum, volume spikes, and sector moves
+> 2. Analyze the best opportunities with technical indicators + news sentiment
+> 3. Execute trades that pass all safety filters (earnings, correlation, risk limits)
+> 4. Monitor existing positions and exit when stop-loss/take-profit triggers
+>
+> Enable **"Auto-run"** to let it trade continuously without you clicking anything.
+
+**Step 3: Or trade manually (Manual Trade)**
+> Go to **Manual Trade**, type stock symbols (e.g., `AAPL, NVDA, TSLA`), click **Analyze**.
+> The AI shows its recommendation. Click **BUY** or **SELL** to execute.
+
+**Step 4: Monitor and learn**
+> - **Positions** — see your open trades with stop-loss/take-profit levels
+> - **Performance** — track win rate, Sharpe ratio, equity curve over time
+> - **AI Analysis** — read exactly why the AI made each decision
+> - **Algorithm Lab** — watch the AI evolve its own strategies
+> - **Risk & Regime** — see market conditions and safety controls
+
+### Key Concepts
+| Term | What it means |
+|------|--------------|
+| **Stop-Loss** | Auto-sells if price drops 2% below entry — limits your losses |
+| **Take-Profit** | Auto-sells when price rises 4% above entry — locks in gains |
+| **Trailing Stop** | Follows price up, sells if it drops 1.5% from peak — captures gains |
+| **Kill Switch** | Emergency halt — stops ALL trading instantly |
+| **Market Regime** | BULL/BEAR/VOLATILE/SIDEWAYS — AI adjusts strategy per regime |
+| **Scanner Score** | 0-100 opportunity ranking — higher is better |
+
+### Tips
+- Start with **Autopilot** to see the AI in action
+- Check **Performance** after a few cycles to see how it's doing
+- Use **Algorithm Lab** to let the AI discover better strategies
+- The **Event Feed** shows everything the AI does in real-time
+        """)
+
+        if st.button("Got it! Start trading", type="primary"):
+            st.session_state.onboarding_done = True
+            st.rerun()
 
 
 # ── Session State ────────────────────────────────────────────────────────────
@@ -279,6 +396,9 @@ def manual_execute(symbol: str, action: str, quantity: int, price: float):
 #  LAYOUT
 # ═══════════════════════════════════════════════════════════════════════════════
 
+# ── Onboarding ───────────────────────────────────────────────────────────────
+show_onboarding()
+
 # ── Header ───────────────────────────────────────────────────────────────────
 prices = get_prices()
 summary = portfolio.summary(prices)
@@ -291,12 +411,12 @@ with hc2:
     st.caption(f"Cycle #{st.session_state.cycle_count} | {datetime.now().strftime('%H:%M:%S')}")
 
 m1, m2, m3, m4, m5, m6 = st.columns(6)
-m1.metric("Portfolio", f"${summary['total_value']:,.2f}", f"{ret_pct:+.2f}%")
-m2.metric("Cash", f"${summary['cash']:,.2f}")
-m3.metric("Realized", f"${summary['realized_pnl']:+,.2f}")
-m4.metric("Unrealized", f"${summary['unrealized_pnl']:+,.2f}")
-m5.metric("Fees", f"${summary['total_fees_paid']:,.2f}")
-m6.metric("Trades", st.session_state.trades_today)
+m1.metric("Portfolio", f"${summary['total_value']:,.2f}", f"{ret_pct:+.2f}%", help=help_icon("portfolio_value"))
+m2.metric("Cash", f"${summary['cash']:,.2f}", help=help_icon("cash"))
+m3.metric("Realized", f"${summary['realized_pnl']:+,.2f}", help=help_icon("realized_pnl"))
+m4.metric("Unrealized", f"${summary['unrealized_pnl']:+,.2f}", help=help_icon("unrealized_pnl"))
+m5.metric("Fees", f"${summary['total_fees_paid']:,.2f}", help=help_icon("fees"))
+m6.metric("Trades", st.session_state.trades_today, help=help_icon("trades_today"))
 
 st.divider()
 
@@ -305,7 +425,7 @@ page = st.radio(
     "Mode",
     ["Autopilot", "Manual Trade", "Positions", "Market Scanner", "AI Analysis",
      "Trade Log", "Performance", "Algorithm Lab", "Developer Agent", "Risk & Regime",
-     "Quote Store", "Event Feed", "Settings"],
+     "Quote Store", "Event Feed", "Settings", "Help"],
     horizontal=True,
     label_visibility="collapsed",
 )
@@ -314,15 +434,15 @@ page = st.radio(
 # ── PAGE: Autopilot ─────────────────────────────────────────────────────────
 if page == "Autopilot":
     st.subheader("Autopilot")
-    st.caption("AI scans the market, picks stocks, trades, and manages positions autonomously.")
+    info("autopilot")
 
     c1, c2, c3 = st.columns([1, 1, 2])
     with c1:
-        run_btn = st.button("Run Cycle", type="primary", use_container_width=True)
+        run_btn = st.button("Run Cycle", type="primary", use_container_width=True, help=help_icon("run_cycle"))
     with c2:
-        auto = st.toggle("Auto-run", value=False)
+        auto = st.toggle("Auto-run", value=False, help=help_icon("auto_run"))
     with c3:
-        interval = st.slider("Interval (sec)", 60, 600, 120, step=30, label_visibility="collapsed")
+        interval = st.slider("Interval (sec)", 60, 600, 120, step=30, label_visibility="collapsed", help="How often the AI runs a full trading cycle when Auto-run is enabled.")
 
     if run_btn:
         pb = st.progress(0)
@@ -371,13 +491,13 @@ if page == "Autopilot":
 # ── PAGE: Manual Trade ───────────────────────────────────────────────────────
 elif page == "Manual Trade":
     st.subheader("Manual Trade")
-    st.caption("Pick specific symbols to analyze and trade.")
+    info("manual_trade")
 
     c1, c2 = st.columns([3, 1])
     with c1:
         symbols_input = st.text_input("Symbols (comma-separated)", "AAPL, NVDA, TSLA, MSFT")
     with c2:
-        analyze_btn = st.button("Analyze", type="primary", use_container_width=True)
+        analyze_btn = st.button("Analyze", type="primary", use_container_width=True, help=help_icon("analyze_btn"))
 
     if analyze_btn:
         syms = [s.strip().upper() for s in symbols_input.split(",") if s.strip()]
@@ -428,6 +548,7 @@ elif page == "Manual Trade":
 # ── PAGE: Positions ──────────────────────────────────────────────────────────
 elif page == "Positions":
     st.subheader("Open Positions")
+    info("positions")
 
     if portfolio.positions:
         rows = []
@@ -467,10 +588,11 @@ elif page == "Positions":
 # ── PAGE: Market Scanner ─────────────────────────────────────────────────────
 elif page == "Market Scanner":
     st.subheader("Market Scanner")
+    info("scanner")
 
     sc1, sc2 = st.columns([1, 3])
     with sc1:
-        if st.button("Scan Now", type="primary"):
+        if st.button("Scan Now", type="primary", help="Scans 50+ stocks for momentum, volume breakouts, and sector rotation. Takes ~15 seconds."):
             with st.spinner("Scanning..."):
                 autopilot_scan()
 
@@ -493,6 +615,7 @@ elif page == "Market Scanner":
 # ── PAGE: AI Analysis ────────────────────────────────────────────────────────
 elif page == "AI Analysis":
     st.subheader("AI Analysis")
+    info("ai_analysis")
 
     analyzed = st.session_state.analyzed
     if analyzed:
@@ -520,6 +643,7 @@ elif page == "AI Analysis":
 # ── PAGE: Trade Log ──────────────────────────────────────────────────────────
 elif page == "Trade Log":
     st.subheader("Trade Log")
+    info("trade_log")
 
     filter_sym = st.text_input("Filter by symbol (blank = all)", "")
     trades = trade_log.recent_trades(symbol=filter_sym or None, limit=50)
@@ -547,6 +671,7 @@ elif page == "Trade Log":
 # ── PAGE: Performance ────────────────────────────────────────────────────────
 elif page == "Performance":
     st.subheader("Performance Analytics")
+    info("performance")
 
     perf = trade_log.performance_summary()
     trades = trade_log.recent_trades(limit=100)
@@ -564,10 +689,10 @@ elif page == "Performance":
 
     # Metrics
     mc1, mc2, mc3, mc4 = st.columns(4)
-    mc1.metric("Sharpe Ratio", f"{metrics['sharpe_ratio']:.2f}")
-    mc2.metric("Max Drawdown", f"${metrics['max_drawdown']:,.2f}")
-    mc3.metric("Profit Factor", f"{metrics['profit_factor']:.2f}")
-    mc4.metric("Max Consec. Losses", metrics["max_consecutive_losses"])
+    mc1.metric("Sharpe Ratio", f"{metrics['sharpe_ratio']:.2f}", help=help_icon("sharpe"))
+    mc2.metric("Max Drawdown", f"${metrics['max_drawdown']:,.2f}", help=help_icon("max_drawdown"))
+    mc3.metric("Profit Factor", f"{metrics['profit_factor']:.2f}", help=help_icon("profit_factor"))
+    mc4.metric("Max Consec. Losses", metrics["max_consecutive_losses"], help="Most consecutive losing trades in a row. If > 5, the system pauses to reassess.")
 
     a1, a2 = st.columns(2)
     with a1:
@@ -641,7 +766,7 @@ elif page == "Event Feed":
 # ── PAGE: Algorithm Lab ──────────────────────────────────────────────────────
 elif page == "Algorithm Lab":
     st.subheader("Algorithm Lab")
-    st.caption("Self-evolving strategies — genetic algorithm discovers best TA combinations.")
+    info("algo_lab")
 
     lab = st.session_state.algo_lab
     qs = st.session_state.quote_store
@@ -654,7 +779,7 @@ elif page == "Algorithm Lab":
     with c3:
         evolve_syms = st.text_input("Symbols to test on", "AAPL, NVDA, TSLA")
 
-    if st.button("Evolve Strategies", type="primary"):
+    if st.button("Evolve Strategies", type="primary", help=help_icon("evolve")):
         syms = [s.strip().upper() for s in evolve_syms.split(",") if s.strip()]
         with st.spinner(f"Collecting quotes and evolving {pop_size} strategies over {gens} generations..."):
             for s in syms:
@@ -698,7 +823,7 @@ elif page == "Algorithm Lab":
 # ── PAGE: Developer Agent ────────────────────────────────────────────────────
 elif page == "Developer Agent":
     st.subheader("Developer Agent")
-    st.caption("AI sub-agent that writes new technical analysis algorithms on demand.")
+    info("dev_agent")
 
     dev = st.session_state.dev_agent
 
@@ -744,6 +869,7 @@ elif page == "Developer Agent":
 # ── PAGE: Risk & Regime ──────────────────────────────────────────────────────
 elif page == "Risk & Regime":
     st.subheader("Risk Management & Market Regime")
+    info("risk_regime")
 
     # Market regime
     st.markdown("**Current Market Regime**")
@@ -776,9 +902,11 @@ elif page == "Risk & Regime":
 
     # Kill switch controls
     st.divider()
+    st.markdown("**Kill Switch**")
+    info("kill_switch")
     ks1, ks2 = st.columns(2)
     with ks1:
-        if st.button("ACTIVATE Kill Switch", type="secondary"):
+        if st.button("ACTIVATE Kill Switch", type="secondary", help="Immediately halts ALL trading. Use in emergencies."):
             RiskManager.activate_kill_switch("Manual activation from dashboard")
             st.error("Kill switch activated! All trading halted.")
             st.rerun()
@@ -792,7 +920,7 @@ elif page == "Risk & Regime":
 # ── PAGE: Quote Store ────────────────────────────────────────────────────────
 elif page == "Quote Store":
     st.subheader("Quote Store")
-    st.caption("Persistent time-series database for backtesting and strategy evolution.")
+    info("quote_store")
 
     qs = st.session_state.quote_store
 
@@ -868,7 +996,7 @@ elif page == "Settings":
     st.caption(", ".join(SP500_SAMPLE[:20]) + "...")
 
     st.divider()
-    if st.button("Reset Portfolio", type="secondary"):
+    if st.button("Reset Portfolio", type="secondary", help="Resets cash to $100,000, closes all positions, and clears trade history for this session."):
         portfolio.cash = 100_000.0
         portfolio.positions.clear()
         portfolio.realized_pnl = 0.0
@@ -878,3 +1006,183 @@ elif page == "Settings":
         pos_mgr.rules.clear()
         st.success("Portfolio reset to $100,000.")
         st.rerun()
+
+
+# ── PAGE: Help ───────────────────────────────────────────────────────────────
+elif page == "Help":
+    st.subheader("Help & User Guide")
+
+    st.markdown("""
+    ### Quick Start
+    1. Click **Autopilot** tab > **Run Cycle** to let the AI trade automatically
+    2. Or click **Manual Trade** > type symbols > **Analyze** > **BUY/SELL**
+    3. Check **Positions** to see your open trades
+    4. Check **Performance** to see how you're doing
+    """)
+
+    st.divider()
+
+    st.markdown("### Page Guide")
+
+    with st.expander("Autopilot — Let the AI trade for you"):
+        st.markdown("""
+**What it does:** Scans 50+ stocks, picks opportunities, confirms with AI reasoning, executes trades, and monitors positions — all automatically.
+
+**How to use:**
+1. Click **Run Cycle** to run one scan-analyze-trade-monitor cycle
+2. Toggle **Auto-run** to repeat automatically every N seconds
+3. Watch the event log at the bottom for real-time activity
+
+**What happens in each cycle:**
+- **SCAN:** Checks 50+ stocks for momentum, volume spikes, sector rotation
+- **ANALYZE:** AI evaluates top picks with 15+ technical indicators + news
+- **FILTER:** Checks earnings calendar, sector concentration, correlation, risk limits
+- **EXECUTE:** Buys stocks that pass all filters (with fees)
+- **MONITOR:** Checks existing positions for stop-loss, take-profit, trailing stop exits
+
+**Safety features active:**
+- Daily loss limit: trading halts if portfolio drops > 1.5% in a day
+- Max 30% in any single sector
+- No buying stocks with earnings in next 3 days
+- Rejects trades correlated > 70% with existing positions
+- Market regime adjusts position sizes (smaller in volatile markets)
+        """)
+
+    with st.expander("Manual Trade — Analyze and trade specific stocks"):
+        st.markdown("""
+**What it does:** You pick the stocks, the AI analyzes them, you decide whether to trade.
+
+**How to use:**
+1. Type stock symbols separated by commas (e.g., `AAPL, NVDA, TSLA`)
+2. Click **Analyze** — the AI fetches live data and runs its reasoning engine
+3. Each stock gets a **BUY / SELL / HOLD** recommendation with confidence %
+4. Expand a stock to see full technicals, news, and reasoning
+5. Use the **BUY** or **SELL** buttons to execute manually
+
+**What the AI looks at:**
+- RSI (overbought > 70, oversold < 30)
+- MACD histogram (positive = bullish, negative = bearish)
+- Bollinger Bands (price position relative to bands)
+- News sentiment from recent headlines
+        """)
+
+    with st.expander("Positions — Monitor your open trades"):
+        st.markdown("""
+**Columns explained:**
+- **Entry:** Your purchase price (including fees baked into cost basis)
+- **Current:** Live market price
+- **P&L:** Unrealized profit/loss (hasn't been sold yet)
+- **Stop-Loss:** If price drops below this, position is automatically closed
+- **Take-Profit:** If price reaches this target, position is automatically closed
+- **Trail Stop:** Follows price upward. If price drops 1.5% from its highest point, sells
+
+**Close All Positions:** Emergency button to sell everything immediately.
+        """)
+
+    with st.expander("Market Scanner — Discover opportunities"):
+        st.markdown("""
+**Scans for:**
+- **Momentum:** Stocks with strong recent price + volume trends
+- **Volume breakouts:** Unusual volume (> 2x average) suggesting big moves
+- **Sector rotation:** Which sectors are leading or lagging today
+
+**Score column:** 0-100 opportunity ranking. Higher = stronger signal.
+- 50+: Very strong move (e.g., stock down 5%)
+- 25-50: Solid opportunity
+- < 25: Weak signal, usually filtered out
+        """)
+
+    with st.expander("AI Analysis — See the AI's reasoning"):
+        st.markdown("""
+Each stock analyzed gets a detailed breakdown:
+- **Technical indicators:** RSI, MACD, Bollinger Bands with specific values
+- **Sentiment:** Score from -1 (bearish) to +1 (bullish) based on news
+- **Headlines:** Recent news articles the AI considered
+- **Reasoning:** Plain-English explanation of why BUY/SELL/HOLD
+- **Scanner context:** What triggered the scanner to pick this stock
+        """)
+
+    with st.expander("Performance — Track your results"):
+        st.markdown("""
+**Key metrics:**
+- **Win Rate:** % of closed trades that were profitable
+- **Sharpe Ratio:** Return per unit of risk. > 1.0 is good, > 2.0 is excellent
+- **Max Drawdown:** Worst peak-to-trough decline. Lower is better
+- **Profit Factor:** Total wins / total losses. > 1.0 = profitable
+- **Equity Curve:** Portfolio value plotted over time
+
+**Feedback Analysis:** The AI identifies patterns in losing trades and suggests improvements.
+        """)
+
+    with st.expander("Algorithm Lab — Self-evolving strategies"):
+        st.markdown("""
+**How it works:**
+1. Generates random strategies (different indicator combinations + weights)
+2. Backtests each on historical data (with fees, walk-forward testing)
+3. Tests statistical significance (Monte Carlo permutation)
+4. Breeds the top performers (genetic crossover + mutation)
+5. Promotes the winner to production
+
+**Parameters:**
+- **Population:** How many random strategies to test (more = slower but better)
+- **Generations:** How many breed cycles (more = more evolved)
+- **Symbols:** Which stocks to test on (use diverse set for robustness)
+        """)
+
+    with st.expander("Developer Agent — Create custom indicators"):
+        st.markdown("""
+**What it does:** An AI sub-agent that writes Python code for new technical indicators.
+
+**How to use:**
+1. Describe what you want in plain English
+2. Click **Create Indicator**
+3. The agent writes code, validates it on sample data, and registers it
+4. New indicators are automatically available for the Algorithm Lab
+
+**Example prompts:**
+- "Detect mean reversion using z-score of price vs 20-day SMA"
+- "Build a volatility squeeze detector using Bollinger + Keltner"
+- "Create a multi-timeframe momentum indicator using 7/14/28 RSI"
+        """)
+
+    with st.expander("Risk & Regime — Safety controls"):
+        st.markdown("""
+**Market Regime:**
+- **BULL:** Low volatility, uptrend — full position sizes
+- **BEAR:** High volatility, downtrend — 30% position sizes
+- **VOLATILE:** High VIX, no clear direction — 50% position sizes
+- **SIDEWAYS:** Low volatility, flat — 80% position sizes
+
+**Risk Controls:**
+- Daily loss limit halts trading after -1.5% daily loss
+- Kill switch immediately stops ALL trading
+- 30-min cooldown after any trade loses > 2%
+- Max 50 trades per day (prevents overtrading)
+
+**Kill Switch:** File-based emergency halt. Activate from dashboard or create `data/.kill_switch` file.
+        """)
+
+    with st.expander("Quote Store — Historical data"):
+        st.markdown("""
+The AI builds its own database of price history over time.
+
+**Watchlist:** Symbols the AI is tracking. Add manually or let the autopilot add them.
+**Collect Quotes:** Downloads recent price data and stores it locally.
+**Used by:** Algorithm Lab for backtesting strategies on historical data.
+
+More historical data = better strategy evolution.
+        """)
+
+    with st.expander("Settings — Adjust parameters"):
+        st.markdown("""
+**Risk parameters:**
+- Stop-Loss %: How far price can drop before auto-sell (default: 2%)
+- Take-Profit %: Target gain to lock in (default: 4%)
+- Trailing Stop %: Distance from peak before selling (default: 1.5%)
+- Max Hold: Force-close after this many minutes (default: 180)
+- Max Positions: How many stocks to hold at once (default: 5)
+- Min Scanner Score: Minimum quality threshold for opportunities (default: 25)
+
+**Fee Model:** Shows the broker fee structure being simulated.
+**Reset Portfolio:** Starts fresh with $100,000.
+        """)
