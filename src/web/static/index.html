@@ -328,26 +328,25 @@ function toggleAutoRun() {
 // ── Manual Trade ────────────────────────────────────────────────────────────
 async function manualAnalyze() {
     const syms = document.getElementById('manualSymbols').value.split(',').map(s => s.trim().toUpperCase()).filter(Boolean);
-    document.getElementById('manualResults').innerHTML = '<span class="spinner"></span>Analyzing...';
+    document.getElementById('manualResults').innerHTML = '<span class="spinner"></span>Analyzing ' + syms.length + ' symbols in parallel...';
+    // Single batch API call — all symbols analyzed in parallel on server
+    const data = await api(`/api/analyze-batch?symbols=${syms.join(',')}`);
     let html = '';
-    for (const sym of syms) {
-        try {
-            const d = await api(`/api/analyze/${sym}`);
-            if (d.error) { html += `<div class="card"><h3>${sym}</h3><p class="red">${d.error}</p></div>`; continue; }
-            html += `<div class="card">
-                <h3>${signalBadge(d.action)} ${sym} @ ${fmtMoney(d.price)} <span style="color:#8b949e">(${(d.confidence*100).toFixed(0)}% confidence)</span></h3>
-                <div class="row">
-                    <div class="flex-1"><strong>RSI:</strong> ${fmt(d.rsi,1)} (${d.rsi_label}) | <strong>MACD:</strong> ${fmt(d.macd,4)} | <strong>Sentiment:</strong> ${fmt(d.sentiment,2)}</div>
-                </div>
-                <div style="margin:8px 0;color:#8b949e;font-size:0.85em">${d.reasoning.substring(0,300)}</div>
-                ${d.headlines?.filter(Boolean).slice(0,3).map(h => `<div style="font-size:0.8em;color:#8b949e">- ${h.substring(0,70)}</div>`).join('')}
-                <div class="row" style="margin-top:12px">
-                    <input type="number" id="qty_${sym}" value="10" style="width:80px" min="1">
-                    <button class="btn btn-primary" onclick="doTrade('${sym}','BUY')">BUY ${sym}</button>
-                    <button class="btn btn-danger" onclick="doTrade('${sym}','SELL')">SELL ${sym}</button>
-                </div>
-            </div>`;
-        } catch(e) { html += `<div class="card"><h3>${sym}</h3><p class="red">Error: ${e}</p></div>`; }
+    for (const d of data) {
+        if (d.error) { html += `<div class="card"><h3>${d.symbol}</h3><p class="red">${d.error}</p></div>`; continue; }
+        html += `<div class="card">
+            <h3>${signalBadge(d.action)} ${d.symbol} @ ${fmtMoney(d.price)} <span style="color:#8b949e">(${(d.confidence*100).toFixed(0)}% confidence)</span></h3>
+            <div class="row">
+                <div class="flex-1"><strong>RSI:</strong> ${fmt(d.rsi,1)} (${d.rsi_label}) | <strong>MACD:</strong> ${fmt(d.macd,4)} | <strong>Sentiment:</strong> ${fmt(d.sentiment,2)}</div>
+            </div>
+            <div style="margin:8px 0;color:#8b949e;font-size:0.85em">${(d.reasoning||'').substring(0,300)}</div>
+            ${(d.headlines||[]).filter(Boolean).slice(0,3).map(h => `<div style="font-size:0.8em;color:#8b949e">- ${h.substring(0,70)}</div>`).join('')}
+            <div class="row" style="margin-top:12px">
+                <input type="number" id="qty_${d.symbol}" value="10" style="width:80px" min="1">
+                <button class="btn btn-primary" onclick="doTrade('${d.symbol}','BUY')">BUY ${d.symbol}</button>
+                <button class="btn btn-danger" onclick="doTrade('${d.symbol}','SELL')">SELL ${d.symbol}</button>
+            </div>
+        </div>`;
     }
     document.getElementById('manualResults').innerHTML = html;
 }

@@ -230,6 +230,39 @@ async def api_analyze(symbol: str):
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
+# ── API: Batch Analyze (parallel) ─────────────────────────────────────────────
+@app.get("/api/analyze-batch")
+async def api_analyze_batch(symbols: str = "AAPL,NVDA"):
+    """Analyze multiple symbols in parallel. Pass comma-separated symbols."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    sym_list = [s.strip().upper() for s in symbols.split(",") if s.strip()]
+    end = datetime.now(UTC)
+    start = end - timedelta(days=5)
+
+    def _analyze(sym):
+        try:
+            state = state_builder.build(sym, start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d"))
+            signal = engine.decide(state)
+            return {
+                "symbol": sym, "action": signal.action.value,
+                "confidence": signal.confidence, "reasoning": signal.reasoning,
+                "price": state.technicals.current_price, "rsi": state.technicals.rsi,
+                "rsi_label": state.technicals.rsi_label,
+                "macd": state.technicals.macd_histogram,
+                "bb_lower": state.technicals.bb_lower, "bb_mid": state.technicals.bb_mid,
+                "bb_upper": state.technicals.bb_upper,
+                "sentiment": state.sentiment.overall_score,
+                "headlines": [h.get("title", "") for h in state.headlines[:5]],
+            }
+        except Exception as e:
+            return {"symbol": sym, "error": str(e)}
+
+    with ThreadPoolExecutor(max_workers=min(len(sym_list), 8)) as pool:
+        results = list(pool.map(_analyze, sym_list))
+    return results
+
+
 # ── API: Manual Buy/Sell ─────────────────────────────────────────────────────
 @app.post("/api/trade")
 async def api_trade(request: Request):

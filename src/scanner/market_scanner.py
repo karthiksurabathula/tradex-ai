@@ -62,16 +62,24 @@ class MarketScanner:
         self.max_workers = max_workers
 
     def full_scan(self, top_n: int = 10) -> list[ScanResult]:
-        """Run all scanners and return top N opportunities ranked by score."""
+        """Run ALL scanners in parallel and return top N ranked by score."""
         logger.info("Starting full market scan across %d symbols...", len(self.universe))
 
         all_results: list[ScanResult] = []
 
-        # Run scanners
-        all_results.extend(self._scan_trending())
-        all_results.extend(self._scan_momentum())
-        all_results.extend(self._scan_volume_breakouts())
-        all_results.extend(self._scan_sector_rotation())
+        # Run all 4 scan types in parallel
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            futures = [
+                executor.submit(self._scan_trending),
+                executor.submit(self._scan_momentum),
+                executor.submit(self._scan_volume_breakouts),
+                executor.submit(self._scan_sector_rotation),
+            ]
+            for future in as_completed(futures):
+                try:
+                    all_results.extend(future.result())
+                except Exception as e:
+                    logger.error("Scanner phase failed: %s", e)
 
         # Deduplicate by symbol, keep highest score
         best = {}
