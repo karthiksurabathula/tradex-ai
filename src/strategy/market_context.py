@@ -169,11 +169,17 @@ class VolatilityAdjuster:
     def get_atr(self, symbol: str, period: int = 14) -> float:
         """Get Average True Range for a symbol."""
         try:
-            import pandas_ta as ta
             hist = yf.Ticker(symbol).history(period="1mo", interval="1d")
             if len(hist) < period + 1:
                 return 0.0
-            atr = ta.atr(hist["High"], hist["Low"], hist["Close"], length=period)
+            # Try pandas_ta first, then ta library
+            try:
+                import pandas_ta as pta
+                atr = pta.atr(hist["High"], hist["Low"], hist["Close"], length=period)
+            except ImportError:
+                from ta.volatility import AverageTrueRange
+                atr_ind = AverageTrueRange(hist["High"], hist["Low"], hist["Close"], window=period)
+                atr = atr_ind.average_true_range()
             if atr is not None and not atr.empty:
                 return float(atr.iloc[-1])
         except Exception:

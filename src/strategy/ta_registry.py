@@ -7,26 +7,40 @@ The broker's AlgorithmLab tests different combinations and weights.
 from __future__ import annotations
 
 import pandas as pd
-import pandas_ta as ta
+
+try:
+    import pandas_ta as ta
+except ImportError:
+    ta = None  # type: ignore[assignment]
 
 
 def _safe(series: pd.Series | None, default: float = 0.0) -> pd.Series:
-    if series is None or series.empty:
+    if series is None or (hasattr(series, 'empty') and series.empty):
         return pd.Series(dtype=float)
     return series.fillna(default)
+
+
+def _ta_call(func_name: str, *args, **kwargs):
+    """Call a pandas_ta function by name, return None if pandas_ta unavailable."""
+    if ta is None:
+        return None
+    fn = getattr(ta, func_name, None)
+    if fn is None:
+        return None
+    return fn(*args, **kwargs)
 
 
 # ── Momentum Indicators ──────────────────────────────────────────────────────
 
 def signal_rsi(df: pd.DataFrame, length: int = 14) -> pd.Series:
     """RSI → -1 (overbought) to +1 (oversold buy signal)."""
-    rsi = _safe(ta.rsi(df["close"], length=length), 50)
+    rsi = _safe(_ta_call("rsi", df["close"], length=length), 50)
     return ((50 - rsi) / 50).clip(-1, 1)
 
 
 def signal_stoch_rsi(df: pd.DataFrame, length: int = 14) -> pd.Series:
     """Stochastic RSI → -1 to +1."""
-    stoch = ta.stochrsi(df["close"], length=length)
+    stoch = _ta_call("stochrsi", df["close"], length=length)
     if stoch is None or stoch.empty:
         return pd.Series(0.0, index=df.index)
     k = stoch.iloc[:, 0].fillna(50)
@@ -35,19 +49,19 @@ def signal_stoch_rsi(df: pd.DataFrame, length: int = 14) -> pd.Series:
 
 def signal_cci(df: pd.DataFrame, length: int = 20) -> pd.Series:
     """Commodity Channel Index → -1 to +1."""
-    cci = _safe(ta.cci(df["high"], df["low"], df["close"], length=length), 0)
+    cci = _safe(_ta_call("cci", df["high"], df["low"], df["close"], length=length), 0)
     return (cci / -200).clip(-1, 1)
 
 
 def signal_willr(df: pd.DataFrame, length: int = 14) -> pd.Series:
     """Williams %R → -1 to +1."""
-    wr = _safe(ta.willr(df["high"], df["low"], df["close"], length=length), -50)
+    wr = _safe(_ta_call("willr", df["high"], df["low"], df["close"], length=length), -50)
     return ((wr + 50) / 50).clip(-1, 1)
 
 
 def signal_roc(df: pd.DataFrame, length: int = 10) -> pd.Series:
     """Rate of Change → -1 to +1."""
-    roc = _safe(ta.roc(df["close"], length=length), 0)
+    roc = _safe(_ta_call("roc", df["close"], length=length), 0)
     return (roc / 5).clip(-1, 1)
 
 
@@ -55,7 +69,7 @@ def signal_roc(df: pd.DataFrame, length: int = 10) -> pd.Series:
 
 def signal_macd(df: pd.DataFrame) -> pd.Series:
     """MACD histogram → -1 to +1."""
-    macd = ta.macd(df["close"])
+    macd = _ta_call("macd", df["close"])
     if macd is None or macd.empty:
         return pd.Series(0.0, index=df.index)
     hist = macd.iloc[:, 2].fillna(0)  # MACDh
@@ -67,7 +81,7 @@ def signal_macd(df: pd.DataFrame) -> pd.Series:
 
 def signal_adx(df: pd.DataFrame, length: int = 14) -> pd.Series:
     """ADX trend strength → 0 to +1 (strength only, no direction)."""
-    adx = ta.adx(df["high"], df["low"], df["close"], length=length)
+    adx = _ta_call("adx", df["high"], df["low"], df["close"], length=length)
     if adx is None or adx.empty:
         return pd.Series(0.0, index=df.index)
     strength = adx.iloc[:, 0].fillna(0) / 100
@@ -76,8 +90,8 @@ def signal_adx(df: pd.DataFrame, length: int = 14) -> pd.Series:
 
 def signal_ema_cross(df: pd.DataFrame, fast: int = 9, slow: int = 21) -> pd.Series:
     """EMA crossover → +1 (fast > slow) or -1 (fast < slow)."""
-    ema_fast = _safe(ta.ema(df["close"], length=fast))
-    ema_slow = _safe(ta.ema(df["close"], length=slow))
+    ema_fast = _safe(_ta_call("ema", df["close"], length=fast))
+    ema_slow = _safe(_ta_call("ema", df["close"], length=slow))
     if ema_fast.empty or ema_slow.empty:
         return pd.Series(0.0, index=df.index)
     diff = ema_fast - ema_slow
@@ -89,7 +103,7 @@ def signal_ema_cross(df: pd.DataFrame, fast: int = 9, slow: int = 21) -> pd.Seri
 
 def signal_supertrend(df: pd.DataFrame, length: int = 10, multiplier: float = 3.0) -> pd.Series:
     """Supertrend → +1 (uptrend) or -1 (downtrend)."""
-    st = ta.supertrend(df["high"], df["low"], df["close"], length=length, multiplier=multiplier)
+    st = _ta_call("supertrend", df["high"], df["low"], df["close"], length=length, multiplier=multiplier)
     if st is None or st.empty:
         return pd.Series(0.0, index=df.index)
     direction = st.iloc[:, 1].fillna(1)  # SUPERTd
@@ -100,7 +114,7 @@ def signal_supertrend(df: pd.DataFrame, length: int = 10, multiplier: float = 3.
 
 def signal_bbands(df: pd.DataFrame, length: int = 20) -> pd.Series:
     """Bollinger Bands position → -1 (above upper) to +1 (below lower)."""
-    bb = ta.bbands(df["close"], length=length)
+    bb = _ta_call("bbands", df["close"], length=length)
     if bb is None or bb.empty:
         return pd.Series(0.0, index=df.index)
     lower = bb.iloc[:, 0].fillna(df["close"])
@@ -114,7 +128,7 @@ def signal_bbands(df: pd.DataFrame, length: int = 20) -> pd.Series:
 
 def signal_keltner(df: pd.DataFrame, length: int = 20) -> pd.Series:
     """Keltner Channel position → -1 to +1."""
-    kc = ta.kc(df["high"], df["low"], df["close"], length=length)
+    kc = _ta_call("kc", df["high"], df["low"], df["close"], length=length)
     if kc is None or kc.empty:
         return pd.Series(0.0, index=df.index)
     lower = kc.iloc[:, 0].fillna(df["close"])
@@ -128,7 +142,7 @@ def signal_keltner(df: pd.DataFrame, length: int = 20) -> pd.Series:
 
 def signal_atr_regime(df: pd.DataFrame, length: int = 14) -> pd.Series:
     """ATR regime → 0 (low vol) to 1 (high vol). Used for position sizing."""
-    atr = _safe(ta.atr(df["high"], df["low"], df["close"], length=length), 0)
+    atr = _safe(_ta_call("atr", df["high"], df["low"], df["close"], length=length), 0)
     if atr.empty:
         return pd.Series(0.0, index=df.index)
     normalized = atr / df["close"]
@@ -142,7 +156,7 @@ def signal_atr_regime(df: pd.DataFrame, length: int = 14) -> pd.Series:
 
 def signal_obv(df: pd.DataFrame) -> pd.Series:
     """On-Balance Volume trend → -1 to +1."""
-    obv = _safe(ta.obv(df["close"], df["volume"]), 0)
+    obv = _safe(_ta_call("obv", df["close"], df["volume"]), 0)
     if obv.empty:
         return pd.Series(0.0, index=df.index)
     obv_sma = obv.rolling(20).mean().fillna(obv)
@@ -155,7 +169,7 @@ def signal_obv(df: pd.DataFrame) -> pd.Series:
 
 def signal_vwap(df: pd.DataFrame) -> pd.Series:
     """VWAP deviation → +1 (price below vwap, buy) to -1 (above, sell)."""
-    vwap = _safe(ta.vwap(df["high"], df["low"], df["close"], df["volume"]))
+    vwap = _safe(_ta_call("vwap", df["high"], df["low"], df["close"], df["volume"]))
     if vwap.empty:
         return pd.Series(0.0, index=df.index)
     diff = vwap - df["close"]
@@ -167,7 +181,7 @@ def signal_vwap(df: pd.DataFrame) -> pd.Series:
 
 def signal_mfi(df: pd.DataFrame, length: int = 14) -> pd.Series:
     """Money Flow Index → -1 (overbought) to +1 (oversold)."""
-    mfi = _safe(ta.mfi(df["high"], df["low"], df["close"], df["volume"], length=length), 50)
+    mfi = _safe(_ta_call("mfi", df["high"], df["low"], df["close"], df["volume"], length=length), 50)
     return ((50 - mfi) / 50).clip(-1, 1)
 
 
