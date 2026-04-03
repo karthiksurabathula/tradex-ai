@@ -13,8 +13,11 @@ COPY src/ src/
 COPY tests/ tests/
 COPY config.yaml .env.example ./
 
-# Install Python deps + pandas-ta (not on PyPI, install from vendored or ta fallback)
+# Install Python deps
 RUN pip install --no-cache-dir -e . && pip install --no-cache-dir ta>=0.11
+
+# Ensure src is on Python path
+ENV PYTHONPATH=/app
 
 # Create data directory
 RUN mkdir -p data
