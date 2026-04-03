@@ -1,0 +1,44 @@
+# AI Paper Trader Configuration
+
+# Tickers to trade
+symbols:
+  - AAPL
+  - NVDA
+  - MSFT
+  - BTC-USD
+
+# Portfolio
+starting_cash: 100000.0
+
+# Data provider for OpenBB
+data_provider: yfinance
+
+# WorldMonitor API
+worldmonitor_api: ${WORLDMONITOR_API_BASE}
+worldmonitor_key: ${WORLDMONITOR_API_KEY}
+
+# LLM Configuration
+llm_provider: anthropic
+deep_think_model: claude-sonnet-4-6
+quick_think_model: claude-sonnet-4-6
+
+# Trading schedule
+schedule:
+  trading_interval_minutes: 30
+  market_hours_start: 9
+  market_hours_end: 16
+  feedback_hour: 20
+
+# Risk limits
+max_position_pct: 0.10        # Max 10% of portfolio per position
+min_confidence: 0.60           # Minimum confidence to execute a trade
+min_trades_for_feedback: 10    # Minimum sample size before prompt tuning
+
+# Fee model (full traditional)
+fees:
+  commission_per_trade: 4.95
+  spread_pct_equity: 0.0002    # 0.02%
+  spread_pct_crypto: 0.003     # 0.30%
+  sec_fee_per_million: 8.00
+  slippage_pct: 0.001          # 0.10%
+  min_commission: 1.00

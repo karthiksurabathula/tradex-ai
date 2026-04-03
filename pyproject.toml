@@ -1,0 +1,33 @@
+[project]
+name = "ai-paper-trader"
+version = "0.1.0"
+description = "Automated AI paper-trading bot with multi-agent reasoning"
+requires-python = ">=3.11"
+dependencies = [
+    "openbb>=4.0",
+    "tradingagents",
+    "httpx>=0.27",
+    "pydantic>=2.9",
+    "apscheduler>=3.10",
+    "anthropic>=0.40",
+    "rich>=13.0",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "pytest-asyncio", "pytest-cov", "black", "mypy", "ruff"]
+
+[project.scripts]
+trader = "src.main:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
