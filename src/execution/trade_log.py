@@ -40,7 +40,7 @@ class TradeLog:
                 fee_total REAL DEFAULT 0,
                 confidence REAL DEFAULT 0,
                 reasoning TEXT DEFAULT '',
-                executed BOOLEAN DEFAULT 0,
+                executed BOOLEAN DEFAULT FALSE,
                 reason TEXT DEFAULT ''
             )
         """)

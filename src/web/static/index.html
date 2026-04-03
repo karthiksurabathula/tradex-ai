@@ -1,0 +1,469 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>tradex-ai</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, monospace; background: #0d1117; color: #c9d1d9; }
+        a { color: #58a6ff; text-decoration: none; }
+
+        /* Header */
+        .header { background: #161b22; border-bottom: 1px solid #30363d; padding: 12px 24px; display: flex; justify-content: space-between; align-items: center; }
+        .header h1 { font-size: 1.4em; color: #f0f6fc; }
+        .header .meta { font-size: 0.85em; color: #8b949e; }
+
+        /* Metrics bar */
+        .metrics { display: grid; grid-template-columns: repeat(6, 1fr); gap: 12px; padding: 16px 24px; background: #0d1117; }
+        .metric { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 12px; text-align: center; }
+        .metric .label { font-size: 0.75em; color: #8b949e; text-transform: uppercase; letter-spacing: 0.5px; }
+        .metric .value { font-size: 1.5em; font-weight: 700; color: #f0f6fc; margin-top: 4px; }
+        .metric .delta { font-size: 0.85em; margin-top: 2px; }
+        .green { color: #3fb950; } .red { color: #f85149; } .yellow { color: #d29922; }
+
+        /* Nav */
+        .nav { display: flex; gap: 2px; padding: 0 24px; background: #161b22; border-bottom: 1px solid #30363d; overflow-x: auto; }
+        .nav button { background: none; border: none; color: #8b949e; padding: 10px 16px; cursor: pointer; font-size: 0.85em; white-space: nowrap; border-bottom: 2px solid transparent; }
+        .nav button:hover { color: #c9d1d9; }
+        .nav button.active { color: #58a6ff; border-bottom-color: #58a6ff; }
+
+        /* Content */
+        .content { padding: 20px 24px; max-width: 1400px; margin: 0 auto; }
+        .page { display: none; } .page.active { display: block; }
+
+        /* Components */
+        .card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 16px; margin-bottom: 16px; }
+        .card h3 { color: #f0f6fc; margin-bottom: 12px; font-size: 1.1em; }
+        .info-tip { background: #1a1a2e; border-left: 3px solid #58a6ff; padding: 8px 12px; margin-bottom: 12px; font-size: 0.85em; color: #8b949e; border-radius: 0 6px 6px 0; }
+
+        table { width: 100%; border-collapse: collapse; font-size: 0.85em; }
+        th { text-align: left; padding: 8px 12px; border-bottom: 1px solid #30363d; color: #8b949e; font-weight: 600; text-transform: uppercase; font-size: 0.75em; letter-spacing: 0.5px; }
+        td { padding: 8px 12px; border-bottom: 1px solid #21262d; }
+        tr:hover { background: #1c2128; }
+
+        .btn { padding: 8px 20px; border: none; border-radius: 6px; cursor: pointer; font-size: 0.9em; font-weight: 600; }
+        .btn-primary { background: #238636; color: #fff; } .btn-primary:hover { background: #2ea043; }
+        .btn-danger { background: #da3633; color: #fff; } .btn-danger:hover { background: #f85149; }
+        .btn-secondary { background: #30363d; color: #c9d1d9; } .btn-secondary:hover { background: #484f58; }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        input, textarea, select { background: #0d1117; border: 1px solid #30363d; color: #c9d1d9; padding: 8px 12px; border-radius: 6px; font-size: 0.9em; }
+        input:focus, textarea:focus { border-color: #58a6ff; outline: none; }
+
+        .signal-buy { background: #0e4429; color: #3fb950; padding: 4px 10px; border-radius: 4px; font-weight: 700; }
+        .signal-sell { background: #4c1017; color: #f85149; padding: 4px 10px; border-radius: 4px; font-weight: 700; }
+        .signal-hold { background: #3d2e00; color: #d29922; padding: 4px 10px; border-radius: 4px; font-weight: 700; }
+
+        .row { display: flex; gap: 16px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }
+        .flex-1 { flex: 1; }
+        .event-log { font-family: monospace; font-size: 0.8em; max-height: 400px; overflow-y: auto; }
+        .event-line { padding: 3px 0; border-bottom: 1px solid #21262d; }
+        .spinner { display: inline-block; width: 16px; height: 16px; border: 2px solid #30363d; border-top-color: #58a6ff; border-radius: 50%; animation: spin 0.6s linear infinite; margin-right: 8px; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .progress { width: 100%; height: 4px; background: #30363d; border-radius: 2px; margin: 8px 0; }
+        .progress-bar { height: 100%; background: #58a6ff; border-radius: 2px; transition: width 0.3s; }
+
+        @media (max-width: 768px) { .metrics { grid-template-columns: repeat(3, 1fr); } }
+    </style>
+</head>
+<body>
+
+<div class="header">
+    <h1>tradex-ai</h1>
+    <div class="meta" id="headerMeta">Cycle #0 | --:--:--</div>
+</div>
+
+<div class="metrics" id="metricsBar"></div>
+
+<div class="nav" id="navBar">
+    <button class="active" data-page="autopilot">Autopilot</button>
+    <button data-page="manual">Manual Trade</button>
+    <button data-page="positions">Positions</button>
+    <button data-page="scanner">Scanner</button>
+    <button data-page="trades">Trade Log</button>
+    <button data-page="performance">Performance</button>
+    <button data-page="events">Events</button>
+    <button data-page="risk">Risk & Regime</button>
+    <button data-page="help">Help</button>
+</div>
+
+<div class="content">
+    <!-- AUTOPILOT -->
+    <div class="page active" id="page-autopilot">
+        <div class="info-tip">The AI autonomously scans 50+ stocks, picks opportunities, confirms with reasoning engine, executes trades, and monitors positions with stop-loss/take-profit.</div>
+        <div class="row">
+            <button class="btn btn-primary" id="btnRunCycle" onclick="runCycle()">Run Trading Cycle</button>
+            <label><input type="checkbox" id="autoRun" onchange="toggleAutoRun()"> Auto-run every <input type="number" id="autoInterval" value="120" style="width:60px" min="30" max="600">s</label>
+        </div>
+        <div class="progress" id="cycleProgress" style="display:none"><div class="progress-bar" id="cycleBar" style="width:0%"></div></div>
+        <div id="cycleStatus" style="margin-bottom:12px;color:#8b949e"></div>
+        <div class="row">
+            <div class="card flex-1">
+                <h3>Latest Scanner Hits</h3>
+                <div id="scanResults">No scans yet. Click Run Trading Cycle.</div>
+            </div>
+            <div class="card flex-1">
+                <h3>Open Positions</h3>
+                <div id="autoPositions">No positions.</div>
+            </div>
+        </div>
+        <div class="card">
+            <h3>Recent Activity</h3>
+            <div class="event-log" id="autoEvents">No events yet.</div>
+        </div>
+    </div>
+
+    <!-- MANUAL TRADE -->
+    <div class="page" id="page-manual">
+        <div class="info-tip">Type stock symbols, click Analyze to see AI recommendations, then BUY or SELL.</div>
+        <div class="row">
+            <input type="text" id="manualSymbols" placeholder="AAPL, NVDA, TSLA" style="width:300px" value="AAPL, NVDA, TSLA">
+            <button class="btn btn-primary" onclick="manualAnalyze()">Analyze</button>
+        </div>
+        <div id="manualResults"></div>
+    </div>
+
+    <!-- POSITIONS -->
+    <div class="page" id="page-positions">
+        <div class="info-tip">Open positions with entry price, current price, P&L, and automatic exit levels (stop-loss, take-profit, trailing stop).</div>
+        <div id="positionsTable">Loading...</div>
+        <div style="margin-top:12px">
+            <button class="btn btn-danger" onclick="resetPortfolio()">Reset Portfolio ($100k)</button>
+        </div>
+    </div>
+
+    <!-- SCANNER -->
+    <div class="page" id="page-scanner">
+        <div class="info-tip">Scans 50+ stocks for momentum breakouts, unusual volume, and sector rotation. Score 0-100 (higher = better opportunity).</div>
+        <button class="btn btn-primary" onclick="runScanner()">Scan Now</button>
+        <div id="scannerResults" style="margin-top:12px"></div>
+    </div>
+
+    <!-- TRADE LOG -->
+    <div class="page" id="page-trades">
+        <div class="info-tip">Every trade executed with price, fees, P&L, and the AI's reasoning.</div>
+        <div class="row">
+            <input type="text" id="tradeFilter" placeholder="Filter by symbol..." style="width:200px">
+            <button class="btn btn-secondary" onclick="loadTrades()">Refresh</button>
+        </div>
+        <div id="tradeLogTable" style="margin-top:12px"></div>
+    </div>
+
+    <!-- PERFORMANCE -->
+    <div class="page" id="page-performance">
+        <div class="info-tip">Historical performance: win rate, Sharpe ratio, max drawdown, profit factor, and cumulative P&L.</div>
+        <div id="perfMetrics"></div>
+        <div id="perfReview" style="margin-top:12px"></div>
+    </div>
+
+    <!-- EVENTS -->
+    <div class="page" id="page-events">
+        <div class="info-tip">Real-time timeline of all system activity: scans, analysis, trades, exits, errors.</div>
+        <button class="btn btn-secondary" onclick="loadEvents()">Refresh</button>
+        <div class="event-log" id="eventFeed" style="margin-top:12px"></div>
+    </div>
+
+    <!-- RISK & REGIME -->
+    <div class="page" id="page-risk">
+        <div class="info-tip">Market regime detection (VIX-based), risk controls, and kill switch. Position sizes auto-adjust by regime.</div>
+        <div id="regimeInfo"></div>
+        <div class="row" style="margin-top:16px">
+            <button class="btn btn-danger" onclick="killSwitch('activate')">ACTIVATE Kill Switch</button>
+            <button class="btn btn-secondary" onclick="killSwitch('deactivate')">Deactivate Kill Switch</button>
+        </div>
+        <div id="riskInfo" style="margin-top:12px"></div>
+    </div>
+
+    <!-- HELP -->
+    <div class="page" id="page-help">
+        <div class="card">
+            <h3>Getting Started</h3>
+            <ol style="padding-left:20px;line-height:1.8">
+                <li>You start with <strong>$100,000 paper money</strong> (no real money)</li>
+                <li>Go to <strong>Autopilot</strong> and click <strong>Run Trading Cycle</strong></li>
+                <li>The AI scans 50+ stocks, picks the best, and trades automatically</li>
+                <li>Check <strong>Positions</strong> to see your open trades</li>
+                <li>Check <strong>Performance</strong> to track win rate and P&L</li>
+            </ol>
+        </div>
+        <div class="card">
+            <h3>Key Concepts</h3>
+            <table>
+                <tr><td><strong>Stop-Loss</strong></td><td>Auto-sells if price drops 2% below entry</td></tr>
+                <tr><td><strong>Take-Profit</strong></td><td>Auto-sells when price rises 4% above entry</td></tr>
+                <tr><td><strong>Trailing Stop</strong></td><td>Follows price up, sells if it drops 1.5% from peak</td></tr>
+                <tr><td><strong>Kill Switch</strong></td><td>Emergency halt — stops ALL trading instantly</td></tr>
+                <tr><td><strong>Market Regime</strong></td><td>BULL/BEAR/VOLATILE/SIDEWAYS — AI adjusts per regime</td></tr>
+                <tr><td><strong>Scanner Score</strong></td><td>0-100 opportunity ranking (higher = better)</td></tr>
+                <tr><td><strong>Sharpe Ratio</strong></td><td>Risk-adjusted return. >1 good, >2 excellent</td></tr>
+                <tr><td><strong>Profit Factor</strong></td><td>Total wins / total losses. >1 = profitable</td></tr>
+            </table>
+        </div>
+        <div class="card">
+            <h3>Pages</h3>
+            <table>
+                <tr><td><strong>Autopilot</strong></td><td>AI scans, decides, trades, monitors — fully autonomous</td></tr>
+                <tr><td><strong>Manual Trade</strong></td><td>Pick symbols, see AI analysis, click BUY/SELL</td></tr>
+                <tr><td><strong>Positions</strong></td><td>Open holdings with exit levels and P&L</td></tr>
+                <tr><td><strong>Scanner</strong></td><td>On-demand market scan with scores</td></tr>
+                <tr><td><strong>Trade Log</strong></td><td>Every trade with fees, P&L, reasoning</td></tr>
+                <tr><td><strong>Performance</strong></td><td>Win rate, Sharpe, drawdown, equity curve</td></tr>
+                <tr><td><strong>Events</strong></td><td>Real-time system activity log</td></tr>
+                <tr><td><strong>Risk & Regime</strong></td><td>VIX, market regime, kill switch</td></tr>
+            </table>
+        </div>
+    </div>
+</div>
+
+<script>
+// ── State ───────────────────────────────────────────────────────────────────
+let autoRunTimer = null;
+
+// ── Navigation ──────────────────────────────────────────────────────────────
+document.querySelectorAll('.nav button').forEach(btn => {
+    btn.addEventListener('click', () => {
+        document.querySelectorAll('.nav button').forEach(b => b.classList.remove('active'));
+        document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+        btn.classList.add('active');
+        document.getElementById('page-' + btn.dataset.page).classList.add('active');
+        // Load data for page
+        const pg = btn.dataset.page;
+        if (pg === 'positions') loadPortfolio();
+        if (pg === 'trades') loadTrades();
+        if (pg === 'performance') loadPerformance();
+        if (pg === 'events') loadEvents();
+        if (pg === 'risk') loadRegime();
+    });
+});
+
+// ── API Helpers ─────────────────────────────────────────────────────────────
+async function api(url, opts = {}) {
+    const res = await fetch(url, { headers: {'Content-Type': 'application/json'}, ...opts });
+    return res.json();
+}
+
+function signalBadge(action) {
+    const cls = action === 'BUY' ? 'signal-buy' : action === 'SELL' ? 'signal-sell' : 'signal-hold';
+    return `<span class="${cls}">${action}</span>`;
+}
+
+function pnlColor(val) { return val >= 0 ? 'green' : 'red'; }
+function fmt(n, d=2) { return n !== null && n !== undefined ? Number(n).toFixed(d) : '-'; }
+function fmtMoney(n) { return n !== null && n !== undefined ? '$' + Number(n).toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2}) : '-'; }
+
+// ── Metrics Bar ─────────────────────────────────────────────────────────────
+async function loadMetrics() {
+    const d = await api('/api/portfolio');
+    const s = d.summary;
+    const ret = ((s.total_value - 100000) / 100000 * 100).toFixed(2);
+    document.getElementById('metricsBar').innerHTML = `
+        <div class="metric"><div class="label">Portfolio</div><div class="value">${fmtMoney(s.total_value)}</div><div class="delta ${ret>=0?'green':'red'}">${ret>0?'+':''}${ret}%</div></div>
+        <div class="metric"><div class="label">Cash</div><div class="value">${fmtMoney(s.cash)}</div></div>
+        <div class="metric"><div class="label">Realized P&L</div><div class="value ${pnlColor(s.realized_pnl)}">${fmtMoney(s.realized_pnl)}</div></div>
+        <div class="metric"><div class="label">Unrealized</div><div class="value ${pnlColor(s.unrealized_pnl)}">${fmtMoney(s.unrealized_pnl)}</div></div>
+        <div class="metric"><div class="label">Fees Paid</div><div class="value yellow">${fmtMoney(s.total_fees_paid)}</div></div>
+        <div class="metric"><div class="label">Trades</div><div class="value">${d.trades_today}</div></div>`;
+    document.getElementById('headerMeta').textContent = `Cycle #${d.cycle_count} | ${new Date().toLocaleTimeString()}`;
+}
+
+// ── Autopilot ───────────────────────────────────────────────────────────────
+async function runCycle() {
+    const btn = document.getElementById('btnRunCycle');
+    btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>Running...';
+    const prog = document.getElementById('cycleProgress'); prog.style.display = 'block';
+    const bar = document.getElementById('cycleBar');
+    const status = document.getElementById('cycleStatus');
+
+    bar.style.width = '10%'; status.textContent = 'Scanning market...';
+    const data = await api('/api/autopilot/run', {method:'POST'});
+    bar.style.width = '100%'; status.textContent = `Cycle complete! ${data.scan?.length||0} scanned, ${data.trades?.length||0} trades, ${data.exits?.length||0} exits`;
+
+    // Update scan results
+    if (data.scan?.length) {
+        document.getElementById('scanResults').innerHTML = data.scan.slice(0,8).map(r =>
+            `<div style="padding:4px 0;border-bottom:1px solid #21262d"><strong>${r.symbol}</strong> <span style="color:#8b949e">Score ${r.score.toFixed(0)}</span> ${r.reason.substring(0,50)}</div>`
+        ).join('');
+    }
+
+    await loadMetrics();
+    await loadAutoPositions();
+    await loadAutoEvents();
+
+    btn.disabled = false; btn.textContent = 'Run Trading Cycle';
+    setTimeout(() => { prog.style.display = 'none'; }, 3000);
+}
+
+async function loadAutoPositions() {
+    const d = await api('/api/portfolio');
+    if (d.positions?.length) {
+        document.getElementById('autoPositions').innerHTML = d.positions.map(p =>
+            `<div style="padding:4px 0;border-bottom:1px solid #21262d">
+                <strong>${p.symbol}</strong> ${p.quantity} shares @ ${fmtMoney(p.avg_cost)} → ${fmtMoney(p.current_price)}
+                <span class="${pnlColor(p.pnl)}">${fmtMoney(p.pnl)}</span>
+            </div>`
+        ).join('');
+    } else {
+        document.getElementById('autoPositions').textContent = 'No positions.';
+    }
+}
+
+async function loadAutoEvents() {
+    const evts = await api('/api/events');
+    document.getElementById('autoEvents').innerHTML = evts.slice(0,15).map(e =>
+        `<div class="event-line">${e.time} [${e.type}] ${e.symbol ? '<strong>'+e.symbol+'</strong> ' : ''}${e.message}</div>`
+    ).join('');
+}
+
+function toggleAutoRun() {
+    if (document.getElementById('autoRun').checked) {
+        const interval = parseInt(document.getElementById('autoInterval').value) * 1000;
+        runCycle();
+        autoRunTimer = setInterval(runCycle, interval);
+    } else {
+        clearInterval(autoRunTimer); autoRunTimer = null;
+    }
+}
+
+// ── Manual Trade ────────────────────────────────────────────────────────────
+async function manualAnalyze() {
+    const syms = document.getElementById('manualSymbols').value.split(',').map(s => s.trim().toUpperCase()).filter(Boolean);
+    document.getElementById('manualResults').innerHTML = '<span class="spinner"></span>Analyzing...';
+    let html = '';
+    for (const sym of syms) {
+        try {
+            const d = await api(`/api/analyze/${sym}`);
+            if (d.error) { html += `<div class="card"><h3>${sym}</h3><p class="red">${d.error}</p></div>`; continue; }
+            html += `<div class="card">
+                <h3>${signalBadge(d.action)} ${sym} @ ${fmtMoney(d.price)} <span style="color:#8b949e">(${(d.confidence*100).toFixed(0)}% confidence)</span></h3>
+                <div class="row">
+                    <div class="flex-1"><strong>RSI:</strong> ${fmt(d.rsi,1)} (${d.rsi_label}) | <strong>MACD:</strong> ${fmt(d.macd,4)} | <strong>Sentiment:</strong> ${fmt(d.sentiment,2)}</div>
+                </div>
+                <div style="margin:8px 0;color:#8b949e;font-size:0.85em">${d.reasoning.substring(0,300)}</div>
+                ${d.headlines?.filter(Boolean).slice(0,3).map(h => `<div style="font-size:0.8em;color:#8b949e">- ${h.substring(0,70)}</div>`).join('')}
+                <div class="row" style="margin-top:12px">
+                    <input type="number" id="qty_${sym}" value="10" style="width:80px" min="1">
+                    <button class="btn btn-primary" onclick="doTrade('${sym}','BUY')">BUY ${sym}</button>
+                    <button class="btn btn-danger" onclick="doTrade('${sym}','SELL')">SELL ${sym}</button>
+                </div>
+            </div>`;
+        } catch(e) { html += `<div class="card"><h3>${sym}</h3><p class="red">Error: ${e}</p></div>`; }
+    }
+    document.getElementById('manualResults').innerHTML = html;
+}
+
+async function doTrade(symbol, action) {
+    const qty = parseInt(document.getElementById(`qty_${symbol}`).value) || 10;
+    const res = await api('/api/trade', {method:'POST', body: JSON.stringify({symbol, action, quantity: qty, price: 0})});
+    if (res.error) { alert(res.error); } else { alert(`${action} ${qty} ${symbol} @ ${fmtMoney(res.price || 0)}`); loadMetrics(); }
+}
+
+// ── Positions ───────────────────────────────────────────────────────────────
+async function loadPortfolio() {
+    const d = await api('/api/portfolio');
+    if (!d.positions?.length) { document.getElementById('positionsTable').innerHTML = '<p>No open positions.</p>'; return; }
+    document.getElementById('positionsTable').innerHTML = `<table>
+        <tr><th>Symbol</th><th>Qty</th><th>Entry</th><th>Current</th><th>P&L</th><th>P&L%</th><th>Stop-Loss</th><th>Take-Profit</th><th>Trail</th><th>Value</th></tr>
+        ${d.positions.map(p => `<tr>
+            <td><strong>${p.symbol}</strong>${p.is_short?' (SHORT)':''}</td><td>${p.quantity}</td>
+            <td>${fmtMoney(p.avg_cost)}</td><td>${fmtMoney(p.current_price)}</td>
+            <td class="${pnlColor(p.pnl)}">${fmtMoney(p.pnl)}</td><td class="${pnlColor(p.pnl_pct)}">${fmt(p.pnl_pct,1)}%</td>
+            <td>${p.stop_loss?fmtMoney(p.stop_loss):'-'}</td><td>${p.take_profit?fmtMoney(p.take_profit):'-'}</td>
+            <td>${p.trailing_stop?fmtMoney(p.trailing_stop):'-'}</td><td>${fmtMoney(p.value)}</td>
+        </tr>`).join('')}
+    </table>`;
+}
+
+// ── Scanner ─────────────────────────────────────────────────────────────────
+async function runScanner() {
+    document.getElementById('scannerResults').innerHTML = '<span class="spinner"></span>Scanning...';
+    const data = await api('/api/scanner');
+    if (!data?.length) { document.getElementById('scannerResults').innerHTML = '<p>No opportunities found.</p>'; return; }
+    document.getElementById('scannerResults').innerHTML = `<table>
+        <tr><th>Symbol</th><th>Score</th><th>Category</th><th>Change</th><th>Vol</th><th>Price</th><th>Reason</th></tr>
+        ${data.map(r => `<tr><td><strong>${r.symbol}</strong></td><td>${fmt(r.score,0)}</td><td>${r.category.toUpperCase()}</td>
+            <td class="${r.change>=0?'green':'red'}">${fmt(r.change,1)}%</td>
+            <td>${r.volume_ratio?fmt(r.volume_ratio,1)+'x':'-'}</td><td>${r.price?fmtMoney(r.price):'-'}</td>
+            <td style="max-width:300px">${r.reason}</td></tr>`).join('')}
+    </table>`;
+}
+
+// ── Trade Log ───────────────────────────────────────────────────────────────
+async function loadTrades() {
+    const sym = document.getElementById('tradeFilter')?.value || '';
+    const data = await api(`/api/trades?symbol=${sym}&limit=30`);
+    if (!data?.length) { document.getElementById('tradeLogTable').innerHTML = '<p>No trades yet.</p>'; return; }
+    document.getElementById('tradeLogTable').innerHTML = `<table>
+        <tr><th>Time</th><th>Symbol</th><th>Action</th><th>Qty</th><th>Price</th><th>Net P&L</th><th>Fees</th><th>Exec</th></tr>
+        ${data.map(t => `<tr>
+            <td>${(t.timestamp||'').substring(0,19)}</td><td><strong>${t.symbol}</strong></td>
+            <td>${signalBadge(t.action)}</td><td>${t.quantity}</td><td>${fmtMoney(t.price)}</td>
+            <td class="${pnlColor(t.net_pnl)}">${t.net_pnl?fmtMoney(t.net_pnl):'-'}</td>
+            <td>${fmtMoney(t.fee_total)}</td><td>${t.executed?'Yes':'No'}</td>
+        </tr>`).join('')}
+    </table>`;
+}
+
+// ── Performance ─────────────────────────────────────────────────────────────
+async function loadPerformance() {
+    const d = await api('/api/performance');
+    const p = d.performance, m = d.metrics;
+    document.getElementById('perfMetrics').innerHTML = `
+        <div class="metrics" style="padding:0;margin-bottom:16px">
+            <div class="metric"><div class="label">Trades</div><div class="value">${p.total_trades}</div></div>
+            <div class="metric"><div class="label">Win Rate</div><div class="value">${(p.win_rate*100).toFixed(0)}%</div></div>
+            <div class="metric"><div class="label">Net P&L</div><div class="value ${pnlColor(p.total_pnl)}">${fmtMoney(p.total_pnl)}</div></div>
+            <div class="metric"><div class="label">Sharpe</div><div class="value">${fmt(m.sharpe_ratio)}</div></div>
+            <div class="metric"><div class="label">Max Drawdown</div><div class="value red">${fmtMoney(m.max_drawdown)}</div></div>
+            <div class="metric"><div class="label">Profit Factor</div><div class="value">${fmt(m.profit_factor)}</div></div>
+        </div>`;
+    const rev = d.review;
+    let reviewHtml = '<div class="card"><h3>Feedback Analysis</h3>';
+    if (rev.loss_patterns?.length) { reviewHtml += '<p class="yellow">Loss patterns: ' + rev.loss_patterns.join(', ') + '</p>'; }
+    reviewHtml += `<p>${rev.recommendation}</p></div>`;
+    document.getElementById('perfReview').innerHTML = reviewHtml;
+}
+
+// ── Events ──────────────────────────────────────────────────────────────────
+async function loadEvents() {
+    const evts = await api('/api/events');
+    document.getElementById('eventFeed').innerHTML = evts.map(e =>
+        `<div class="event-line">${e.time} <strong>[${e.type}]</strong> ${e.symbol?'<span style="color:#58a6ff">'+e.symbol+'</span> ':''}${e.message}</div>`
+    ).join('') || 'No events yet.';
+}
+
+// ── Risk & Regime ───────────────────────────────────────────────────────────
+async function loadRegime() {
+    const reg = await api('/api/regime');
+    const regimeColors = {BULL:'green',BEAR:'red',VOLATILE:'yellow',SIDEWAYS:'#8b949e'};
+    document.getElementById('regimeInfo').innerHTML = `<div class="metrics" style="padding:0">
+        <div class="metric"><div class="label">Regime</div><div class="value" style="color:${regimeColors[reg.regime]||'#ccc'}">${reg.regime}</div></div>
+        <div class="metric"><div class="label">VIX</div><div class="value">${fmt(reg.vix,1)}</div></div>
+        <div class="metric"><div class="label">SPY</div><div class="value ${pnlColor(reg.spy_change)}">${fmt(reg.spy_change,1)}%</div></div>
+        <div class="metric"><div class="label">Position Mult.</div><div class="value">${fmt(reg.position_multiplier,1)}x</div></div>
+    </div>`;
+    const risk = await api('/api/risk');
+    document.getElementById('riskInfo').innerHTML = `<div class="card"><h3>Risk Status</h3>
+        <p>Halted: <strong class="${risk.halted?'red':'green'}">${risk.halted?'YES':'No'}</strong> | Kill Switch: <strong class="${risk.kill_switch?'red':'green'}">${risk.kill_switch?'ACTIVE':'Off'}</strong> | Trades today: ${risk.trades_today}</p>
+        ${risk.halted?'<p class="red">'+risk.halt_reason+'</p>':''}
+    </div>`;
+}
+
+async function killSwitch(action) {
+    if (action === 'activate' && !confirm('ACTIVATE kill switch? This halts ALL trading.')) return;
+    await api(`/api/kill-switch/${action}`, {method:'POST'});
+    loadRegime();
+}
+
+async function resetPortfolio() {
+    if (!confirm('Reset portfolio to $100,000? All positions will be closed.')) return;
+    await api('/api/reset', {method:'POST'});
+    loadMetrics(); loadPortfolio();
+}
+
+// ── Init ────────────────────────────────────────────────────────────────────
+loadMetrics();
+setInterval(loadMetrics, 30000); // Refresh metrics every 30s
+</script>
+</body>
+</html>

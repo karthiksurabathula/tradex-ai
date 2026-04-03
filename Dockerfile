@@ -22,6 +22,6 @@ ENV PYTHONPATH=/app
 # Create data directory
 RUN mkdir -p data
 
-EXPOSE 8501
+EXPOSE 8000
 
-CMD ["streamlit", "run", "src/dashboard.py", "--server.address", "0.0.0.0", "--server.port", "8501"]
+CMD ["uvicorn", "src.web.app:app", "--host", "0.0.0.0", "--port", "8000"]

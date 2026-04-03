@@ -56,6 +56,44 @@ def _get_pool():
             raise
 
 
+class PgConnectionWrapper:
+    """Wraps psycopg2 connection to support conn.execute() like sqlite3."""
+
+    def __init__(self, conn):
+        self._conn = conn
+
+    def execute(self, sql, params=None):
+        cur = self._conn.cursor()
+        cur.execute(sql, params or ())
+        return cur
+
+    def executescript(self, sql):
+        """Execute multiple statements (split by semicolons)."""
+        cur = self._conn.cursor()
+        for stmt in sql.split(";"):
+            stmt = stmt.strip()
+            if stmt:
+                cur.execute(stmt)
+        return cur
+
+    def cursor(self, **kwargs):
+        return self._conn.cursor(**kwargs)
+
+    def commit(self):
+        self._conn.commit()
+
+    def close(self):
+        self._conn.close()
+
+    @property
+    def row_factory(self):
+        return None
+
+    @row_factory.setter
+    def row_factory(self, val):
+        pass  # No-op for psycopg2
+
+
 def get_connection():
     """Return a database connection.
 
@@ -66,10 +104,14 @@ def get_connection():
     url = get_db_url()
 
     if url.startswith("postgresql://") or url.startswith("postgres://"):
-        pool = _get_pool()
-        conn = pool.getconn()
-        conn.autocommit = False
-        return conn
+        try:
+            pool = _get_pool()
+            conn = pool.getconn()
+            conn.autocommit = False
+            return PgConnectionWrapper(conn)
+        except Exception as e:
+            logger.warning("PostgreSQL unavailable (%s), falling back to SQLite", e)
+            # Fall through to SQLite
 
     # SQLite fallback
     if url.startswith("sqlite://"):
