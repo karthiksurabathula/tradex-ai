@@ -1,16 +1,19 @@
 # tradex-ai
 
 ## Overview
-Autonomous AI paper-trading bot. Scans markets, picks stocks, trades intraday, manages risk, and evolves its own strategies — no human intervention needed. PostgreSQL (Docker) or SQLite (local) backend.
+Autonomous AI paper-trading bot. Scans markets, builds market state, generates BUY/SELL/HOLD signals, executes paper trades, manages intraday risk, and evolves technical strategies over time. PostgreSQL is the default backend when available; SQLite works as a local fallback.
 
 ## How to Run
 ```bash
-# Docker (recommended — includes PostgreSQL)
+# Docker / FastAPI dashboard
 docker compose up -d
 # Open http://localhost:8000
 
-# Local (SQLite fallback)
+# Local FastAPI dashboard (SQLite fallback)
 DATABASE_URL=sqlite:///data/tradex.db uvicorn src.web.app:app --port 8000
+
+# Streamlit dashboard
+streamlit run src/dashboard.py
 
 # Terminal autopilot (no web UI)
 python -m src.autopilot [--aggressive] [--cash 50000]
@@ -18,7 +21,18 @@ python -m src.autopilot [--aggressive] [--cash 50000]
 # CLI quick check
 python -m src.cli once --symbols AAPL NVDA
 python -m src.cli status
+
+# Scheduler loop
+python -m src.main
 ```
+
+## Runtime Surfaces
+
+- `src/web/app.py`: FastAPI app with HTML dashboard and `/api/*` endpoints.
+- `src/dashboard.py`: Streamlit dashboard with 14 pages.
+- `src/autopilot.py`: Rich terminal autopilot loop.
+- `src/cli.py`: single-cycle, watch, and status commands.
+- `src/main.py`: APScheduler-driven trading loop using `config.yaml`.
 
 ## Architecture
 
@@ -66,8 +80,9 @@ python -m src.cli status
    ├── RiskManager.check_correlation() → reject if >0.7 correlated
    └── MarketContext.regime        → adjust position size by VIX regime
 
-5. Executor.execute()           → sequential (cash depends on prior trade)
-   ├── Portfolio.buy()/sell()   → deducts fees, updates positions
+5. Execution                    → sequential (cash depends on prior trade)
+   ├── Executor.execute() in CLI/scheduler paths
+   ├── OR direct PersistentPortfolio.buy()/sell() in FastAPI/Streamlit/autopilot paths
    ├── TradeLog.record()        → persists to PostgreSQL/SQLite
    └── PositionManager.register_entry() → sets SL/TP/trailing stop
 
@@ -87,6 +102,7 @@ python -m src.cli status
 | File | Purpose | Entry points |
 |------|---------|-------------|
 | `src/web/app.py` | FastAPI web app, all API endpoints | `uvicorn src.web.app:app` |
+| `src/dashboard.py` | Streamlit dashboard with 14 pages | `streamlit run src/dashboard.py` |
 | `src/web/static/index.html` | HTML5/CSS/JS dashboard (single file) | Served at `/` |
 | `src/autopilot.py` | Terminal-based autonomous trading loop | `python -m src.autopilot` |
 | `src/cli.py` | CLI commands (once, watch, status) | `python -m src.cli` |
@@ -104,6 +120,14 @@ python -m src.cli status
 | `src/execution/portfolio_store.py` | Persistent + thread-safe wrapper | `PersistentPortfolio` |
 | `src/execution/fees.py` | Full broker fee model | `FeeModel.calculate()` |
 | `src/agents/developer_agent.py` | AI writes custom TA indicators | `create_indicator()`, `delegate()` |
+
+## Persistence Notes
+
+- `src/autopilot.py`, `src/web/app.py`, and `src/dashboard.py` use `PersistentPortfolio`.
+- `src/cli.py` and `src/main.py` currently instantiate the plain in-memory `Portfolio` class.
+- `TradeLog`, `QuoteStore`, `AlgorithmLab`, and other storage-backed modules use the shared connector in `src/data/database.py`.
+
+This means trade history is shared, but portfolio persistence is not identical across every runtime surface.
 
 ## API Endpoints (FastAPI at port 8000)
 
@@ -181,6 +205,7 @@ python -m src.cli status
 - **Parallel by default**: Scanner, analysis, price fetching all use ThreadPoolExecutor
 - **Dual TA library**: Uses pandas-ta when available, falls back to `ta` library (Docker-friendly)
 - **Dual DB**: PostgreSQL in Docker, SQLite for local dev/testing — same code, auto-detected via DATABASE_URL
+- **Multiple frontends**: FastAPI/HTML and Streamlit dashboards both exist and expose overlapping functionality
 
 ## Data Files (gitignored)
 - `data/trades.db` / PostgreSQL `trades` table — Trade journal

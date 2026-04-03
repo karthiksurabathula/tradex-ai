@@ -1,282 +1,254 @@
-<p align="center">
-  <h1 align="center">tradex-ai</h1>
-  <p align="center">
-    <strong>Autonomous AI paper-trading bot that scans markets, picks stocks, trades, and evolves — no human needed.</strong>
-  </p>
-</p>
+# tradex-ai
 
-<p align="center">
-  <img src="https://img.shields.io/badge/python-3.11+-blue?style=flat-square" alt="Python 3.11+">
-  <img src="https://img.shields.io/badge/tests-60%20passing-brightgreen?style=flat-square" alt="Tests">
-  <img src="https://img.shields.io/badge/API%20keys-zero%20required-orange?style=flat-square" alt="Zero keys required">
-  <img src="https://img.shields.io/badge/version-1.0.0-purple?style=flat-square" alt="v1.0.0">
-  <img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="License">
-</p>
+Autonomous paper-trading system for scanning markets, generating trade signals, executing paper orders, managing intraday risk, and evolving technical strategies over time.
 
----
+## What Is In This Repo
 
-## What is this?
+The codebase has one shared trading pipeline and multiple entrypoints built on top of it.
 
-**tradex-ai** is a fully autonomous paper-trading system. Give it $100k in simulated money and it will:
+Core pipeline:
 
-1. **Scan** 50+ stocks for momentum, volume breakouts, and sector rotation
-2. **Analyze** each opportunity with 15+ technical indicators and news sentiment
-3. **Decide** BUY/SELL/HOLD using AI multi-agent reasoning
-4. **Execute** trades with realistic broker fees ($4.95 + spread + slippage + SEC)
-5. **Monitor** positions with stop-loss, take-profit, and trailing stops
-6. **Learn** from mistakes and evolve better strategies overnight
+1. `MarketScanner` finds opportunities across a fixed equity and crypto universe.
+2. `StateBuilder` merges price history, technical indicators, headlines, and sentiment into a `MarketState`.
+3. `ReasoningEngine` produces `BUY`, `SELL`, or `HOLD` with confidence.
+4. `Executor` and portfolio classes apply paper trades with fees.
+5. `PositionManager` and `RiskManager` handle exits, halts, cooldowns, and kill switch logic.
+6. `QuoteStore`, `TradeLog`, `AlgorithmLab`, and feedback modules persist history and analysis.
 
-**Zero API keys required.** All data sources are free. Add an Anthropic key to unlock the full AI reasoning engine.
+## Entry Points
 
----
+This repo currently exposes five runnable surfaces.
+
+| Surface | Command | Notes |
+|---|---|---|
+| FastAPI dashboard | `uvicorn src.web.app:app --port 8000` | Serves the HTML dashboard at `/` and JSON API endpoints under `/api/*` |
+| Streamlit dashboard | `streamlit run src/dashboard.py` | Separate dashboard implementation with 14 pages |
+| Terminal autopilot | `python -m src.autopilot` | Rich terminal UI with autonomous scan, entry, and exit loop |
+| CLI | `python -m src.cli once --symbols AAPL NVDA` | Single-cycle and watch/status commands |
+| Scheduler loop | `python -m src.main` | APScheduler-driven periodic trading and nightly feedback |
+
+## Which Interface To Use
+
+- Use the FastAPI app if you want the HTML dashboard and HTTP API.
+- Use the Streamlit app if you want the richer exploratory dashboard pages.
+- Use the terminal autopilot if you want the bot to run continuously in a console.
+- Use the CLI for quick checks.
+- Use the scheduler loop if you want cron-style orchestration from `config.yaml`.
 
 ## Quick Start
 
+### Option 1: FastAPI dashboard
+
 ```bash
-git clone https://github.com/karthiksurabathula/tradex-ai.git
-cd tradex-ai
+pip install -e ".[dev]"
+DATABASE_URL=sqlite:///data/tradex.db uvicorn src.web.app:app --port 8000
+```
+
+Open `http://localhost:8000`.
+
+### Option 2: Streamlit dashboard
+
+```bash
 pip install -e ".[dev]"
 streamlit run src/dashboard.py
 ```
 
-Open **http://localhost:8501** and click **Run Trading Cycle**.
+Open `http://localhost:8501`.
 
----
+### Option 3: Terminal autopilot
 
-## Three Ways to Run
-
-| Mode | Command | Description |
-|------|---------|-------------|
-| **Web Dashboard** | `streamlit run src/dashboard.py` | Full visual UI with 14 pages |
-| **Autopilot (terminal)** | `python -m src.autopilot` | Autonomous trading in terminal |
-| **CLI** | `python -m src.cli once` | Quick single-cycle check |
-
----
-
-## Architecture
-
-```
-  Market Data ──┐                              ┌── Stop-Loss / Take-Profit
-  (yfinance)    │                              │── Trailing Stops
-                ├──▶ Scanner ──▶ AI Reasoning ──▶ Paper Execution ──▶ Feedback Loop
-  News/Sentiment│    (50+ stocks) (multi-agent)  (fee-realistic)     (self-improving)
-  (yfinance)    │                              │── Risk Manager
-  Fundamentals ─┘                              └── Regime Detection
+```bash
+pip install -e ".[dev]"
+python -m src.autopilot
 ```
 
-### Module Map
+Aggressive mode:
 
-| Layer | Modules | What it does |
-|-------|---------|-------------|
-| **Data Ingestion** | `openbb_provider`, `yfinance_news_provider`, `fundamental_provider` | OHLCV, technicals, news sentiment, P/E ratios |
-| **Market Scanner** | `market_scanner` | Scans 50+ stocks for momentum, volume, sectors |
-| **AI Reasoning** | `engine`, `senior_trader`, `ensemble` | Multi-agent or rule-based signals with consensus voting |
-| **Strategy** | `algorithm_lab`, `ta_registry`, `intraday_strategist` | 15+ indicators, genetic evolution, position sizing |
-| **Execution** | `portfolio`, `portfolio_store`, `executor`, `fees` | Paper trades with full broker fees, persistent state |
-| **Risk Management** | `risk_manager`, `position_manager`, `market_context` | Circuit breakers, PDT rules, VaR, sector limits |
-| **Feedback** | `reviewer`, `metrics`, `prompt_tuner` | Nightly review, pattern detection, prompt refinement |
-| **Monitoring** | `alerts`, `audit`, `health`, `logging_config` | Alerts, audit trail, health checks, structured logs |
-| **Agents** | `developer_agent` | AI writes custom indicators on demand |
-
----
-
-## Key Features
-
-### Autonomous Trading (Autopilot)
-The bot runs fully independently — scans, decides, trades, monitors, exits:
-- Scans 50+ S&P 500 stocks + crypto every 5 minutes
-- AI confirms each trade before execution (scanner + reasoning must agree)
-- Manages positions with automatic stop-loss, take-profit, trailing stops
-- Force-exits after 3 hours (intraday only)
-
-### Self-Evolving Strategies (Algorithm Lab)
-The AI discovers its own best indicator combinations through genetic evolution:
-- 15 built-in indicators: RSI, MACD, ADX, EMA Cross, Supertrend, Bollinger Bands, Keltner, ATR, OBV, VWAP, MFI, StochRSI, CCI, Williams %R, ROC
-- Generates random strategies, backtests with fees + walk-forward testing
-- Tests statistical significance (Monte Carlo, p < 0.05)
-- Breeds winners, promotes the best to production
-
-### Developer Agent
-An AI sub-agent that writes new technical analysis code on demand:
-```
-"Create a mean reversion indicator using z-score" → Python code → validated → registered
+```bash
+python -m src.autopilot --aggressive --cash 50000
 ```
 
-### Risk Management
-| Control | What it does |
-|---------|-------------|
-| Daily loss limit | Halts trading after -1.5% daily loss |
-| Kill switch | One-click emergency halt (file-based) |
-| Sector cap | Max 30% portfolio in any single sector |
-| Correlation filter | Rejects trades >0.7 correlated with holdings |
-| Earnings avoidance | Skips stocks with earnings in 3 days |
-| PDT compliance | Tracks round-trip day trades (pattern day trader rule) |
-| VaR calculation | Historical + parametric Value-at-Risk |
-| Cooldown | 30-min pause after any >2% loss trade |
-| Max trades/day | Hard limit of 50 trades (prevents overtrading) |
+### Option 4: CLI
 
-### Market Regime Detection
-| Regime | VIX | Position Size | Description |
-|--------|-----|---------------|-------------|
-| BULL | < 15 | 100% | Low vol, uptrend |
-| SIDEWAYS | 15-20 | 80% | No clear direction |
-| VOLATILE | 20-25 | 50% | High vol, choppy |
-| BEAR | > 25 | 30% | Downtrend, defensive |
+```bash
+python -m src.cli once --symbols AAPL NVDA MSFT
+python -m src.cli watch --symbols AAPL NVDA --interval 300
+python -m src.cli status
+```
 
-### Fee-Realistic Paper Trading
-| Cost | Rate | Applied On |
-|------|------|-----------|
-| Commission | $4.95/trade | All trades |
-| Spread | 0.02% equity, 0.30% crypto | All trades |
-| Slippage | 0.10% | All trades |
-| SEC Fee | $8/$1M notional | Sells only |
+### Option 5: Scheduler loop
 
-### Short Selling
-Portfolio supports both long and short positions with proper margin calculation and P&L tracking.
+```bash
+python -m src.main
+```
 
-### Persistent State
-Portfolio state survives restarts (SQLite-backed), including positions, cash, fees, and equity curve history.
+This uses `config.yaml` for symbols, intervals, and nightly feedback settings.
 
-### Monitoring & Observability
-- **Structured logging** — JSON logs with rotating files
-- **Slack alerts** — large losses, kill switch, system errors
-- **Health checks** — yfinance connectivity, SQLite health, data freshness
-- **Audit trail** — append-only decision log with full context
+## Docker
 
----
+The repo includes Docker assets and defaults to PostgreSQL when `DATABASE_URL` is not set.
 
-## Web Dashboard (14 Pages)
+```bash
+docker compose up -d
+```
 
-| Page | Description |
-|------|-------------|
-| **Autopilot** | AI scans, trades, and monitors — with auto-run toggle |
-| **Manual Trade** | Pick symbols, see AI analysis, click BUY/SELL |
-| **Positions** | Open holdings with SL/TP/trailing stop + close-all |
-| **Market Scanner** | On-demand scan with scores, categories, reasons |
-| **AI Analysis** | Full reasoning per symbol — technicals, news, decision logic |
-| **Trade Log** | Every trade with fees, P&L, reasoning — filterable |
-| **Performance** | Win rate, Sharpe, drawdown, profit factor, equity curve |
-| **Algorithm Lab** | Evolve strategies, leaderboard, active strategy detail |
-| **Developer Agent** | Create custom indicators, delegate tasks |
-| **Risk & Regime** | VIX, market regime, risk status, kill switch |
-| **Quote Store** | Watchlist, quote collection, data inventory |
-| **Event Feed** | Real-time timeline of all system activity |
-| **Settings** | Adjust risk params, view fees, reset portfolio |
-| **Help** | Step-by-step guide, onboarding wizard, full documentation |
+The default database URL in code is:
 
-First-time users see an **onboarding wizard** with a 4-step getting started guide. Every button and metric has an info tooltip explaining what it does.
+```text
+postgresql://tradex:tradex@localhost:5432/tradex
+```
 
----
+If PostgreSQL is unavailable, most modules fall back to SQLite when configured with a `sqlite:///...` URL.
+
+## Runtime Architecture
+
+```text
+scanner -> state builder -> reasoning -> execution -> risk/exits -> persistence/feedback
+```
+
+Main components:
+
+| Layer | Modules | Responsibility |
+|---|---|---|
+| Scanning | `src/scanner/market_scanner.py` | Trending, momentum, volume breakout, sector rotation scans |
+| Ingestion | `src/ingestion/openbb_provider.py`, `src/ingestion/state_builder.py`, `src/ingestion/yfinance_news_provider.py` | Price data, technicals, headlines, sentiment |
+| Reasoning | `src/reasoning/engine.py` | TradingAgents when installed, otherwise rule-based fallback |
+| Execution | `src/execution/executor.py`, `src/execution/portfolio.py`, `src/execution/portfolio_store.py`, `src/execution/trade_log.py` | Order sizing, paper fills, persistence, fee-aware PnL |
+| Risk | `src/strategy/risk_manager.py`, `src/strategy/position_manager.py`, `src/strategy/market_context.py` | Kill switch, daily loss limit, sector/correlation checks, exits, market regime |
+| Research | `src/strategy/algorithm_lab.py`, `src/strategy/ta_registry.py` | Indicator registry, backtesting, genetic strategy evolution |
+| Feedback | `src/feedback/reviewer.py`, `src/feedback/metrics.py`, `src/feedback/prompt_tuner.py` | Trade review, metrics, prompt refinement |
+| Agents | `src/agents/developer_agent.py` | Generates custom TA indicators into `data/custom_algorithms/` |
+
+## FastAPI Surface
+
+The FastAPI app in `src/web/app.py` serves the static HTML dashboard and these endpoints:
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/` | HTML dashboard |
+| GET | `/api/portfolio` | Portfolio summary and open positions |
+| POST | `/api/autopilot/run` | Run one scan/analyze/trade/monitor cycle |
+| GET | `/api/analyze/{symbol}` | Analyze one symbol |
+| GET | `/api/analyze-batch` | Parallel symbol analysis |
+| POST | `/api/trade` | Manual buy or sell |
+| GET | `/api/scanner` | Run market scan |
+| GET | `/api/trades` | Recent trades |
+| GET | `/api/performance` | Performance, metrics, equity curve, review |
+| GET | `/api/events` | Recent event feed |
+| GET | `/api/regime` | Market regime snapshot |
+| GET | `/api/risk` | Risk manager status |
+| POST | `/api/kill-switch/{action}` | Activate or deactivate kill switch |
+| POST | `/api/reset` | Reset persistent portfolio state |
+
+## Streamlit Surface
+
+The Streamlit dashboard in `src/dashboard.py` currently exposes these pages:
+
+1. Autopilot
+2. Manual Trade
+3. Positions
+4. Market Scanner
+5. AI Analysis
+6. Trade Log
+7. Performance
+8. Algorithm Lab
+9. Developer Agent
+10. Risk & Regime
+11. Quote Store
+12. Event Feed
+13. Settings
+14. Help
+
+## Persistence Model
+
+The repository has a shared database helper in `src/data/database.py` used by:
+
+- `TradeLog`
+- `PersistentPortfolio`
+- `QuoteStore`
+- `AlgorithmLab`
+- `AuditTrail`
+- monitoring health checks
+
+Important runtime distinction:
+
+- `src/autopilot.py`, `src/web/app.py`, and `src/dashboard.py` use `PersistentPortfolio`.
+- `src/cli.py` and `src/main.py` currently build the plain in-memory `Portfolio` class.
+
+That means not every entrypoint shares identical persistence behavior.
+
+## Data Providers And AI Behavior
+
+- Price and technical data are fetched through `OpenBBProvider` configured to use `yfinance` in the active runtime paths.
+- The common default sentiment provider is `YFinanceNewsProvider`.
+- `src/main.py` can switch to `WorldMonitorProvider` when configured.
+- `ReasoningEngine` uses TradingAgents only if the optional dependency is installed.
+- Without TradingAgents, the fallback path uses weighted RSI, MACD histogram, Bollinger Band position, and sentiment.
+
+## Risk Controls Implemented
+
+- Daily loss limit halt
+- Max drawdown halt
+- Kill switch file at `data/.kill_switch`
+- Max trades per day
+- Cooldown after large loss
+- Sector concentration checks
+- Correlation checks
+- Pattern day trader tracking helpers
+- Stop-loss, take-profit, trailing stop, and max-hold exits
 
 ## Configuration
 
-All settings in `config.yaml` with inline documentation:
+Primary runtime settings live in `config.yaml`, including:
 
-```yaml
-symbols: [AAPL, NVDA, MSFT, BTC-USD]
-starting_cash: 100000.0
-data_interval: 5m                   # 1m, 5m, 15m, 30m, 1h, 1d
-max_position_pct: 0.10              # Max 10% per position
-stop_loss_pct: 0.02                 # 2% auto-sell
-take_profit_pct: 0.04               # 4% target
-daily_loss_limit_pct: 0.015         # Halt at -1.5% daily
-max_sector_pct: 0.30                # Max 30% per sector
-```
-
-See `config.yaml` for full documented options.
-
----
-
-## Tech Stack
-
-| Component | Technology | Key? |
-|-----------|------------|------|
-| Price Data | yfinance via OpenBB | No |
-| Technicals | pandas-ta (15+ indicators) | No |
-| News Sentiment | yfinance headlines | No |
-| Fundamentals | yfinance Ticker.info | No |
-| AI Reasoning | Claude (Anthropic) | Optional |
-| Multi-Agent | TradingAgents | Optional |
-| Data Models | Pydantic | No |
-| Scheduling | APScheduler | No |
-| Web UI | Streamlit | No |
-| Terminal UI | Rich | No |
-| Trade Storage | SQLite | No |
-| Strategy Evolution | Custom genetic algorithm | No |
-
----
+- symbols
+- starting cash
+- data interval and lookback
+- LLM model configuration
+- schedule settings for `src.main`
+- risk limits
+- fee model
+- algorithm lab defaults
 
 ## Project Structure
 
-```
+```text
 src/
-├── main.py                    # APScheduler orchestration loop
-├── autopilot.py               # Fully autonomous trading bot
-├── cli.py                     # CLI (once, watch, status)
-├── dashboard.py               # Streamlit web dashboard (14 pages)
-│
-├── state/models.py            # Pydantic data models
-├── ingestion/                 # Data providers
-│   ├── openbb_provider.py     # OHLCV + technicals
-│   ├── yfinance_news_provider.py  # News + sentiment
-│   ├── fundamental_provider.py    # P/E, margins, revenue
-│   └── state_builder.py      # Merges all data → MarketState
-│
-├── reasoning/                 # AI decision engine
-│   ├── engine.py              # TradingAgents + fallback
-│   ├── senior_trader.py       # Senior Trader prompt
-│   └── prompt_store.py        # Versioned prompts
-│
-├── scanner/market_scanner.py  # 50+ stock momentum/volume scanner
-│
-├── strategy/                  # Strategy evolution + risk
-│   ├── algorithm_lab.py       # Genetic algorithm strategy evolution
-│   ├── ta_registry.py         # 15 built-in TA indicators
-│   ├── ensemble.py            # Multi-model consensus voting
-│   ├── intraday_strategist.py # Position sizing + capital allocation
-│   ├── position_manager.py    # SL/TP/trailing stop management
-│   ├── risk_manager.py        # Circuit breakers, PDT, sector limits
-│   ├── market_context.py      # VIX regime, earnings, ATR sizing
-│   └── var_calculator.py      # Value-at-Risk (historical + parametric)
-│
-├── execution/                 # Trade execution
-│   ├── portfolio.py           # Paper portfolio (long + short)
-│   ├── portfolio_store.py     # Persistent state (SQLite + thread-safe)
-│   ├── executor.py            # Signal → trade mapping
-│   ├── fees.py                # Full broker fee model
-│   └── trade_log.py           # SQLite trade journal
-│
-├── feedback/                  # Self-improvement
-│   ├── reviewer.py            # Trade outcome analysis
-│   ├── metrics.py             # Sharpe, drawdown, profit factor
-│   └── prompt_tuner.py        # LLM-driven prompt refinement
-│
-├── monitoring/                # Observability
-│   ├── alerts.py              # Slack + console alerts
-│   ├── audit.py               # Append-only decision log
-│   ├── health.py              # System health checks
-│   └── logging_config.py      # Structured JSON logging
-│
-├── agents/developer_agent.py  # AI code-writing sub-agent
-└── data/quote_store.py        # Persistent quote history
+  autopilot.py
+  cli.py
+  dashboard.py
+  main.py
+  agents/
+  data/
+  execution/
+  feedback/
+  ingestion/
+  monitoring/
+  reasoning/
+  scanner/
+  state/
+  strategy/
+  web/
+tests/
+data/
 ```
-
----
 
 ## Tests
 
 ```bash
-pytest -v     # 60 tests, all passing
+pytest -v
 ```
 
----
+## Notes On Current State
+
+The repo is functional, but the documentation previously drifted from the code in a few places:
+
+- Both FastAPI and Streamlit dashboards exist.
+- The scheduler path and CLI do not use the same persistent portfolio wrapper as the dashboard/autopilot paths.
+- The docs previously mixed intended architecture with currently wired runtime behavior.
+
+This README now describes the code as it exists today.
 
 ## Disclaimer
 
-This is a **paper trading** system for research and educational purposes. It does not execute real trades or manage real money. Past performance of paper trades does not indicate future results. Always do your own research before making investment decisions.
-
----
-
-## License
-
-MIT
+This is a paper-trading project for research and educational use. It does not place real brokerage orders.
