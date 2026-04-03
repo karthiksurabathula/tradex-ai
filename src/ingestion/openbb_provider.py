@@ -15,8 +15,9 @@ logger = logging.getLogger(__name__)
 class OpenBBProvider:
     """Fetches market data and computes technicals via OpenBB Platform v4."""
 
-    def __init__(self, provider: str = "yfinance"):
+    def __init__(self, provider: str = "yfinance", interval: str = "5m"):
         self.provider = provider
+        self.interval = interval
 
     def fetch_ohlcv(self, symbol: str, start: str, end: str, interval: str = "1d") -> OHLCVData:
         """Fetch OHLCV data for an equity symbol."""
@@ -44,11 +45,12 @@ class OpenBBProvider:
         df = result.to_dataframe()
         return OHLCVData.from_dataframe(symbol, df)
 
-    def fetch(self, symbol: str, start: str, end: str, interval: str = "1d") -> OHLCVData:
+    def fetch(self, symbol: str, start: str, end: str, interval: str | None = None) -> OHLCVData:
         """Auto-detect equity vs crypto and fetch accordingly."""
+        ivl = interval or self.interval
         if self._is_crypto(symbol):
-            return self.fetch_crypto(symbol, start, end, interval)
-        return self.fetch_ohlcv(symbol, start, end, interval)
+            return self.fetch_crypto(symbol, start, end, ivl)
+        return self.fetch_ohlcv(symbol, start, end, ivl)
 
     def compute_technicals(self, symbol: str, df: pd.DataFrame) -> TechnicalIndicators:
         """Compute RSI, MACD, and Bollinger Bands from OHLCV DataFrame."""

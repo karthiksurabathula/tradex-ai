@@ -18,6 +18,7 @@ from src.execution.terminal_ui import TerminalUI
 from src.execution.trade_log import TradeLog
 from src.feedback.prompt_tuner import PromptTuner
 from src.feedback.reviewer import TradeReviewer
+from src.ingestion.gdelt_provider import GdeltProvider
 from src.ingestion.openbb_provider import OpenBBProvider
 from src.ingestion.state_builder import StateBuilder
 from src.ingestion.worldmonitor_provider import WorldMonitorProvider
@@ -48,11 +49,22 @@ def build_components(config: dict) -> dict:
     trade_log = TradeLog()
     prompt_store = PromptStore()
 
-    openbb = OpenBBProvider(provider=config.get("data_provider", "yfinance"))
-    worldmonitor = WorldMonitorProvider(
-        api_base=config.get("worldmonitor_api", ""),
-        api_key=config.get("worldmonitor_key", ""),
+    openbb = OpenBBProvider(
+        provider=config.get("data_provider", "yfinance"),
+        interval=config.get("data_interval", "5m"),
     )
+
+    # Sentiment provider: use GDELT (free, no key) unless WorldMonitor is configured
+    wm_key = config.get("worldmonitor_key", "")
+    if wm_key and wm_key != "${WORLDMONITOR_API_KEY}":
+        logger.info("Using WorldMonitor for sentiment (API key configured)")
+        sentiment_provider = WorldMonitorProvider(
+            api_base=config.get("worldmonitor_api", ""),
+            api_key=wm_key,
+        )
+    else:
+        logger.info("Using GDELT for sentiment (free, no API key required)")
+        sentiment_provider = GdeltProvider()
 
     engine = ReasoningEngine(
         llm_provider=config.get("llm_provider", "anthropic"),
@@ -63,7 +75,7 @@ def build_components(config: dict) -> dict:
 
     return {
         "config": config,
-        "state_builder": StateBuilder(openbb, worldmonitor),
+        "state_builder": StateBuilder(openbb, sentiment_provider),
         "engine": engine,
         "portfolio": portfolio,
         "executor": Executor(
@@ -86,8 +98,10 @@ def run_trading_cycle(symbol: str, components: dict):
     ui.show_divider(f"Trading Cycle: {symbol}")
 
     try:
+        config = components["config"]
+        lookback = config.get("data_lookback_days", 5)
         end = datetime.now(UTC)
-        start = end - timedelta(days=90)
+        start = end - timedelta(days=lookback)
 
         state = components["state_builder"].build(
             symbol,

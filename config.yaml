@@ -10,12 +10,13 @@ symbols:
 # Portfolio
 starting_cash: 100000.0
 
-# Data provider for OpenBB
+# Data provider for OpenBB (yfinance = free, no API key)
 data_provider: yfinance
 
-# WorldMonitor API
-worldmonitor_api: ${WORLDMONITOR_API_BASE}
-worldmonitor_key: ${WORLDMONITOR_API_KEY}
+# Sentiment provider: GDELT is used by default (free, no key).
+# To use WorldMonitor instead, set these env vars:
+# worldmonitor_api: ${WORLDMONITOR_API_BASE}
+# worldmonitor_key: ${WORLDMONITOR_API_KEY}
 
 # LLM Configuration
 llm_provider: anthropic
@@ -24,21 +25,25 @@ quick_think_model: claude-sonnet-4-6
 
 # Trading schedule
 schedule:
-  trading_interval_minutes: 30
+  trading_interval_minutes: 10   # Multiple trades per hour (every 10 min)
   market_hours_start: 9
   market_hours_end: 16
   feedback_hour: 20
 
+# OHLCV data settings
+data_interval: 5m                # Intraday: 1m, 2m, 5m, 15m, 30m, 60m, 1d
+data_lookback_days: 5            # How many days of history to fetch
+
 # Risk limits
-max_position_pct: 0.10        # Max 10% of portfolio per position
-min_confidence: 0.60           # Minimum confidence to execute a trade
-min_trades_for_feedback: 10    # Minimum sample size before prompt tuning
+max_position_pct: 0.10           # Max 10% of portfolio per position
+min_confidence: 0.60             # Minimum confidence to execute a trade
+min_trades_for_feedback: 10      # Minimum sample size before prompt tuning
 
 # Fee model (full traditional)
 fees:
   commission_per_trade: 4.95
-  spread_pct_equity: 0.0002    # 0.02%
-  spread_pct_crypto: 0.003     # 0.30%
+  spread_pct_equity: 0.0002      # 0.02%
+  spread_pct_crypto: 0.003       # 0.30%
   sec_fee_per_million: 8.00
-  slippage_pct: 0.001          # 0.10%
+  slippage_pct: 0.001            # 0.10%
   min_commission: 1.00
